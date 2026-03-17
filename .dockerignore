@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Dependencies
+node_modules
+
+# Environment
+.env
+.env.*
+
+# Logs
+logs
+*.log
+
+# Archives
+_archive
+
+# Chrome profile (will be mounted as volume)
+chrome-profile
+
+# Learning data
+.learnings
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Documentation
+README.md

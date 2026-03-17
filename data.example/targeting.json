@@ -1,0 +1,29 @@
+{
+  "target_roles": ["CEO", "CTO", "Founder", "Co-Founder", "Head of Product", "Directeur", "Fondateur"],
+  "target_industries": ["FinTech", "HealthTech", "E-commerce", "SaaS", "FoodTech", "PropTech", "Marketplace"],
+  "target_countries": ["France", "Belgique", "Suisse"],
+  "company_size": {
+    "min_employees": 1,
+    "max_employees": 200
+  },
+  "scoring": {
+    "roles": {
+      "CEO": 25, "Founder": 25, "CTO": 25, "Co-Founder": 25,
+      "VP": 20, "Director": 20,
+      "Manager": 15, "Head": 20
+    },
+    "signals": {
+      "job_posting_mobile_dev": 15,
+      "recent_funding": 10,
+      "bad_app_reviews": 10,
+      "no_mobile_app": 10,
+      "recent_product_launch": 5
+    },
+    "company_stage": {
+      "seed": 10,
+      "series_a": 15,
+      "series_b": 20
+    },
+    "min_score_to_contact": 40
+  }
+}

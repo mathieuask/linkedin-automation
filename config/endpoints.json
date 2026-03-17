@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-03-11T18:44:00Z",
+  "source": "auto-generated",
+  "base_url": "https://www.linkedin.com",
+  "endpoints": {
+    "feed": {
+      "get_posts": {
+        "path": null,
+        "method": "GET",
+        "status": "missing",
+        "notes": "Endpoint pour récupérer les posts du feed"
+      }
+    },
+    "reactions": {
+      "like_post": {
+        "path": null,
+        "method": "POST",
+        "status": "missing",
+        "notes": "Endpoint pour liker un post"
+      },
+      "unlike_post": {
+        "path": null,
+        "method": "DELETE",
+        "status": "missing"
+      }
+    },
+    "comments": {
+      "post_comment": {
+        "path": null,
+        "method": "POST",
+        "status": "missing"
+      },
+      "get_comments": {
+        "path": null,
+        "method": "GET",
+        "status": "missing"
+      }
+    },
+    "messaging": {
+      "send_message": {
+        "path": null,
+        "method": "POST",
+        "status": "missing"
+      },
+      "get_conversations": {
+        "path": null,
+        "method": "GET",
+        "status": "missing"
+      }
+    },
+    "connections": {
+      "send_invitation": {
+        "path": null,
+        "method": "POST",
+        "status": "missing"
+      },
+      "withdraw_invitation": {
+        "path": null,
+        "method": "DELETE",
+        "status": "missing"
+      }
+    },
+    "profile": {
+      "get_profile": {
+        "path": null,
+        "method": "GET",
+        "status": "missing"
+      }
+    }
+  },
+  "required_headers": {
+    "csrf-token": "extract from cookies",
+    "x-restli-protocol-version": "2.0.0"
+  }
+}

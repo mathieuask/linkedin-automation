@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-03-11T18:44:00Z",
+  "source": "auto-generated",
+  "selectors": {
+    "feed": {
+      "post_container": "[role=\"listitem\"][componentkey*=\"expanded\"]",
+      "post_content": ".feed-shared-update-v2__description",
+      "post_author": ".update-components-actor__name",
+      "post_urn_attribute": "data-urn"
+    },
+    "reactions": {
+      "like_button": "button[aria-label*=\"État du bouton de réaction\"]",
+      "reaction_count": ".social-details-social-counts__reactions-count"
+    },
+    "comments": {
+      "comment_button": "button[aria-label*=\"Commenter\"]",
+      "comment_box": ".ql-editor[contenteditable=\"true\"]",
+      "submit_comment": "button[type=\"submit\"]"
+    },
+    "messaging": {
+      "message_button": "a[href*=\"/messaging/\"]",
+      "conversation_list": ".msg-conversation-listitem",
+      "message_input": ".msg-form__contenteditable",
+      "send_button": "button[type=\"submit\"]"
+    }
+  }
+}

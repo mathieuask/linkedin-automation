@@ -1,0 +1,47 @@
+{
+  "lastCheck": "2026-03-16T08:49:00.000Z",
+  "account": "Your Company LinkedIn Page",
+  "healthScore": 100,
+  "actions": {
+    "messages": {
+      "status": "ok",
+      "lastVerified": null,
+      "failCount": 0
+    },
+    "invitations": {
+      "status": "ok",
+      "lastVerified": null,
+      "failCount": 0
+    },
+    "posts": {
+      "status": "ok",
+      "lastVerified": null,
+      "failCount": 0
+    },
+    "likes": {
+      "status": "ok",
+      "lastVerified": null,
+      "failCount": 0
+    },
+    "comments": {
+      "status": "ok",
+      "lastVerified": null,
+      "failCount": 0
+    }
+  },
+  "warmup": {
+    "startDate": "2026-03-15",
+    "currentDay": 1,
+    "stage": "observation"
+  },
+  "dailyCounts": {
+    "2026-03-16": {
+      "likes": 0,
+      "comments": 0,
+      "invitations": 0,
+      "messages": 0,
+      "posts": 0
+    }
+  },
+  "signals": []
+}

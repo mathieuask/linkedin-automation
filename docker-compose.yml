@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  linkedin-bot:
+    build: .
+    container_name: linkedin-automation
+    env_file: .env
+    volumes:
+      - ./chrome-profile:/app/chrome-profile
+      - ./logs:/app/logs
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    # Optional: Add health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

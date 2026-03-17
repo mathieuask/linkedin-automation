@@ -1,0 +1,32 @@
+# Dépendances
+node_modules/
+
+# Profil Chrome (données personnelles + session LinkedIn)
+chrome-profile/
+linkedin-profile*/
+
+# Variables d'environnement (credentials!)
+.env
+
+# Logs (générés à l'exécution)
+logs/*.json
+logs/*.png
+logs/*.html
+logs/*.log
+logs/*.txt
+logs/*.webm
+logs/self-heal/
+!logs/.gitkeep
+
+# Archives (trop lourd pour git)
+_archive/
+
+# Fichiers système
+.DS_Store
+*.backup-*
+
+# Vidéos et screenshots de debug
+videos/
+screenshots/
+analysis/
+data/

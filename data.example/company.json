@@ -1,0 +1,12 @@
+{
+  "name": "YourCompany",
+  "founder": "YourName",
+  "founder_age": "28",
+  "service": "apps mobiles iOS/Android",
+  "tech_stack": "React Native, TypeScript",
+  "delivery_time": "4-8 semaines",
+  "price_from": "5k€",
+  "tagline": "MVP rapide, équipe locale, communication fluide",
+  "contact_email": "contact@yourcompany.com",
+  "linkedin_url": "https://www.linkedin.com/in/your-profile/"
+}

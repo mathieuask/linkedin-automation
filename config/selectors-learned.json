@@ -1,0 +1,44 @@
+{
+  "learned": {
+    "like": [
+      {
+        "selector": "button[data-control-name=\"like\"]",
+        "method": "data-control",
+        "learned_at": "2026-03-13T13:38:39.043Z"
+      },
+      {
+        "selector": "button[aria-label*=\"J'aime\"]",
+        "method": "aria-label",
+        "learned_at": "2026-03-13T13:38:39.043Z"
+      }
+    ],
+    "connect": [
+      {
+        "selector": "button[aria-label*=\"Connect\"]",
+        "method": "aria-label",
+        "learned_at": "2026-03-13T13:38:39.044Z"
+      }
+    ],
+    "test_action": [
+      {
+        "selector": "button.test",
+        "method": "test-method",
+        "learned_at": "2026-03-13T13:41:21.455Z"
+      }
+    ]
+  },
+  "stats": {
+    "like": {
+      "success": 2,
+      "fail": 0
+    },
+    "connect": {
+      "success": 1,
+      "fail": 0
+    },
+    "test_action": {
+      "success": 1,
+      "fail": 0
+    }
+  }
+}

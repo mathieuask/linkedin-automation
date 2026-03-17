@@ -1,0 +1,33 @@
+{
+  "_comment": "Copy this file to data/messages/templates.json and customize with your own templates",
+  "roles": {
+    "founder": {
+      "invitation": [
+        "Bonjour {firstName}, votre parcours de founder m'intéresse. Chez {companyName}, on aide les fondateurs à lancer leur app rapidement ({service}, {deliveryTime}). Partant pour un call ?",
+        "{firstName}, en tant que fondateur, un bon MVP peut tout changer. On livre du {service} en {deliveryTime} pour les startups. Ça vous dit d'en discuter ?"
+      ],
+      "first_message": [
+        "Merci d'avoir accepté {firstName} ! Curieux de savoir où vous en êtes sur votre roadmap produit.",
+        "Super de connecter ! Chez {companyName}, on accompagne des fondateurs comme vous sur leur app mobile."
+      ],
+      "comment": [
+        "Excellent point ! On voit exactement ces enjeux chez nos clients startups.",
+        "100% d'accord. On aide les fondateurs à valider leur MVP rapidement ({deliveryTime}) avant d'investir gros."
+      ]
+    },
+    "default": {
+      "invitation": [
+        "Bonjour {firstName}, je développe du {service} pour les startups ({deliveryTime}, dès {priceFrom}). Ouvert à un échange ?",
+        "{firstName}, {companyName} aide les entreprises à lancer leur app rapidement. Partant pour un bref échange ?"
+      ],
+      "first_message": [
+        "Merci {firstName} ! Ravi de connecter. Curieux de savoir où vous en êtes sur vos projets.",
+        "Content de faire partie de votre réseau {firstName}. Si besoin en {service}, on est là ({deliveryTime})."
+      ],
+      "comment": [
+        "Merci pour ce partage {firstName} ! Très pertinent.",
+        "100% d'accord avec cette vision."
+      ]
+    }
+  }
+}
