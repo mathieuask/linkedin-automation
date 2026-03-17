@@ -6,6 +6,27 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
 [![Playwright](https://img.shields.io/badge/playwright-patchright-blue.svg)](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
 
+## 🔄 How it flows
+
+```mermaid
+flowchart TD
+    A[☀️ Morning Planner\n8:00 AM] --> B[📊 Calculate daily quotas\nbased on warm-up phase]
+    B --> C{Weekend?}
+    C -- Yes --> D[😴 Skip or minimal run]
+    C -- No --> E[🔍 Fetch prospects\nfrom Notion CRM]
+    E --> F[🎯 Score profiles\n0-100 ICP match]
+    F --> G[📤 Send invitations\nwith human delays]
+    G --> H{Selector works?}
+    H -- No --> I[🔧 Self-heal\nlearn new selector]
+    I --> G
+    H -- Yes --> J[✅ Update Notion\nInvitation envoyée]
+    J --> K[💬 Check accepted\ninvitations]
+    K --> L[📧 Send first messages\npersonalized by role]
+    L --> M[📊 Daily Report\n8:00 PM]
+    M --> N[🔬 Autoresearch\nAI improves code]
+    N --> O[💾 Log changes\n.learnings/CHANGES.md]
+```
+
 ## ✨ Features
 
 ### 🎯 Smart Prospecting
@@ -93,7 +114,7 @@ linkedin-automation/
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/yourusername/linkedin-automation.git
+git clone https://github.com/mathieuask/linkedin-automation.git
 cd linkedin-automation
 npm install
 ```
@@ -341,6 +362,33 @@ Every week, the system:
 - Personalize at least 30% of messages manually
 - Use Notion to track negative responses and avoid re-contacting
 - Set up alerts for sudden drops in acceptance rate (shadow-ban indicator)
+
+## 🤖 Standalone vs OpenClaw
+
+This project works in **two modes** :
+
+### Standalone (this repo)
+Uses `node-cron` for scheduling. Just run `node daemon.js` and everything is self-contained.
+
+```bash
+node daemon.js        # runs 24/7 with built-in scheduler
+# or
+pm2 start ecosystem.config.js
+```
+
+### With [OpenClaw](https://github.com/openclaw/openclaw) *(recommended)*
+OpenClaw is an AI agent runtime that adds powerful capabilities on top:
+
+| Feature | Standalone | With OpenClaw |
+|---------|-----------|---------------|
+| Scheduling | ✅ node-cron | ✅ Cron jobs with UI |
+| Telegram alerts | ✅ Direct API | ✅ Native channel |
+| Multi-agent | ❌ | ✅ Scout / Writer / Chaser agents |
+| Auto-research | ✅ Basic | ✅ Full AI loop |
+| Monitoring | ❌ | ✅ Dashboard + heartbeat |
+| Conversation replies | ❌ | ✅ AI handles DMs |
+
+OpenClaw handles the orchestration layer (crons, agent sessions, Telegram routing) so you focus on the prospecting logic.
 
 ## 📄 License
 
