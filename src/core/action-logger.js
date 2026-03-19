@@ -176,4 +176,18 @@ function getWeekStats() {
   return weekStats;
 }
 
-module.exports = { logAction, getTodayStats, getWeekStats };
+/**
+ * Raccourci pour logger un message envoyé
+ */
+function logMessage(to, success, error = null) {
+  logAction({ action: 'message', target: to, success, error });
+}
+
+/**
+ * Raccourci pour logger une invitation envoyée
+ */
+function logInvitation(to, success, error = null) {
+  logAction({ action: 'invitation', target: to, success, error });
+}
+
+module.exports = { logAction, logMessage, logInvitation, getTodayStats, getWeekStats };

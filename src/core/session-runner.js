@@ -16,13 +16,15 @@
  *   node session-runner.js --verbose    # Show post details
  */
 
-import { chromium } from 'patchright';
-import { HumanMouseV3 } from './src/utils/human-mouse-v3.js';
-import { analyzePost, getAnalysisStats } from './src/utils/post-analyzer.js';
-import { execSync } from 'child_process';
-import fs from 'fs';
+// chromium géré via chrome-daemon.js
+const { HumanMouseV3 } = require('../utils/human-mouse.js');
+const { analyzePost, getAnalysisStats } = require('../utils/post-analyzer.js');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
-const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://localhost:9222';
+require('dotenv').config();
+
 
 // ─── Helpers ───────────────────────────────────────────────────
 
@@ -40,10 +42,13 @@ function getChromeMemoryMB() {
 function parseArgs() {
   const args = process.argv.slice(2);
   const idx = (flag) => args.indexOf(flag);
+  // Le premier argument positionnel = numéro de session (ex: node session-runner.js 1)
+  const sessionNum = parseInt(args.find(a => /^\d+$/.test(a))) || 1;
   return {
     target: idx('--target') >= 0 ? parseInt(args[idx('--target') + 1]) || 2 : 2,
-    maxCycles: idx('--cycles') >= 0 ? parseInt(args[idx('--cycles') + 1]) || 8 : 8,
+    maxCycles: idx('--cycles') >= 0 ? parseInt(args[idx('--cycles') + 1]) || 25 : 25,
     verbose: args.includes('--verbose'),
+    sessionNum,
   };
 }
 
@@ -100,7 +105,7 @@ async function waitForFeedReady(page, maxWait = 15000) {
 
   while (Date.now() - start < maxWait) {
     const postCount = await page.evaluate(() =>
-      document.querySelectorAll('.feed-shared-update-v2').length
+      document.querySelectorAll('.occludable-update').length
     ).catch(() => 0);
 
     if (postCount >= 2) {
@@ -125,17 +130,21 @@ async function waitForFeedReady(page, maxWait = 15000) {
 
 async function extractPostsWithButtons(page) {
   return await safeEvaluate(page, () => {
-    const posts = Array.from(document.querySelectorAll('.feed-shared-update-v2'));
+    const posts = Array.from(document.querySelectorAll('.occludable-update'));
     
     return posts
-      .filter(el => el.dataset.urn && el.dataset.urn.includes('activity'))
       .map((el, index) => {
+        // data-urn est sur un div enfant
+        const urnEl = el.querySelector('[data-urn]');
+        const postUrn = urnEl ? urnEl.dataset.urn : null;
+
         const text = el.querySelector('.update-components-text span')?.textContent?.trim() || '';
         const author = el.querySelector('.update-components-actor__name span')?.textContent?.trim() || '';
         const title = el.querySelector('.update-components-actor__description span')?.textContent?.trim() || '';
-        const likeBtn = el.querySelector('button[aria-label*="aime"][aria-pressed="false"]');
-        const isAlreadyLiked = !!el.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
-        const reactionsEl = el.querySelector('button[aria-label*="reaction"]');
+
+        // Bouton like : "Réagir avec \"J'aime\"" = pas encore liké
+        const likeBtn = el.querySelector('button[aria-label*="Réagir avec"]');
+        const isAlreadyLiked = !likeBtn; // Si le bouton "Réagir" n'est pas là, c'est déjà liké
 
         return {
           index,
@@ -145,14 +154,14 @@ async function extractPostsWithButtons(page) {
           title,
           hasLikeButton: !!likeBtn,
           isAlreadyLiked,
-          reactions: reactionsEl ? reactionsEl.textContent.trim() : '0',
-          postUrn: el.dataset.urn,
-          buttonSelector: likeBtn
-            ? `div[data-urn="${el.dataset.urn}"] button[aria-label*="aime"][aria-pressed="false"]`
+          reactions: '0',
+          postUrn,
+          buttonSelector: (likeBtn && postUrn)
+            ? `[data-urn="${postUrn}"] button[aria-label*="Réagir avec"]`
             : null,
         };
       })
-      .filter(p => p.text.length > 20);
+      .filter(p => p.hasLikeButton && p.postUrn);
   });
 }
 
@@ -269,18 +278,31 @@ async function likePostAtomic(page, humanMouse, post) {
   return { success: false, reason: 'max_retries_exhausted' };
 }
 
-// ─── CDP Connection ────────────────────────────────────────────
+// ─── CDP via Chrome Daemon ──────────────────────────────────────
+
+const { getLinkedInPage, closePage } = require('./chrome-daemon.js');
+const { logAction } = require('./action-logger.js');
 
 async function connectCDP() {
-  const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-  const contexts = browser.contexts();
-  if (contexts.length === 0) throw new Error('Aucun context browser');
-  const pages = contexts[0].pages();
-  if (pages.length === 0) throw new Error('Aucune page ouverte');
-  return { browser, page: pages[0] };
+  const { browser, page } = await getLinkedInPage();
+  return { browser, page };
 }
 
 // ─── Main Session ──────────────────────────────────────────────
+
+/**
+ * Lit le plan du jour et retourne les quotas pour ce numéro de session
+ */
+function getSessionPlan(sessionNum) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const planFile = path.join(__dirname, `../../logs/plan-${today}.json`);
+    if (!fs.existsSync(planFile)) return null;
+    const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+    const session = plan.sessions.find(s => s.name === `session_${sessionNum}`);
+    return session || null;
+  } catch { return null; }
+}
 
 async function runSession() {
   const { target, maxCycles, verbose } = parseArgs();
@@ -293,19 +315,24 @@ async function runSession() {
   console.log(`🎯 Objectif: ${target} likes, max ${maxCycles} cycles\n`);
   
   let browser;
+  let sessionPage = null;
   let likesCount = 0;
   const likedPosts = [];
   let consecutiveFailures = 0;
   
   try {
-    console.log(`📡 Connexion CDP: ${CDP_ENDPOINT}`);
+    console.log(`📡 Connexion via Chrome Daemon...`);
     const conn = await connectCDP();
     browser = conn.browser;
     const page = conn.page;
+    sessionPage = page;
     console.log(`✅ Connecté — URL: ${page.url()}\n`);
     
-    if (!page.url().includes('linkedin.com/feed')) {
-      console.error('❌ Page n\'est pas le feed LinkedIn');
+    // Vérification qu'on est bien sur le feed
+    const currentUrl = page.url();
+    console.log(`🔍 URL actuelle: ${currentUrl}`);
+    if (!currentUrl.includes('linkedin.com/feed')) {
+      console.error('❌ Pas sur le feed LinkedIn après connexion');
       process.exit(1);
     }
     
@@ -408,22 +435,50 @@ async function runSession() {
         consecutiveFailures = 0;
         likedPosts.push(result.post);
         console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}`);
+        logAction({ action: 'like', target: top.author || top.postUrn, success: true, method_used: result.reason });
       } else {
         console.log(`   ❌ Échoué: ${result.reason}`);
         consecutiveFailures++;
+        logAction({ action: 'like', target: top.postUrn, success: false, error: result.reason });
       }
       
       console.log('');
       await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
     }
     
-    // Phase 3: Return top
+    // Phase 3: Retour haut
     console.log('📍 PHASE 3: Retour haut\n');
     await page.evaluate(() => {
       const c = document.querySelector('.scaffold-layout__main');
       if (c) c.scrollTo(0, 0); else window.scrollTo(0, 0);
     }).catch(() => {});
     await new Promise(r => setTimeout(r, 1500));
+
+    // Phase 4: Invitations (si quota > 0 dans le plan)
+    const { sessionNum } = parseArgs();
+    const sessionPlan = getSessionPlan(sessionNum || 1);
+    const invitationsQuota = sessionPlan?.invitations_quota || 0;
+
+    let invitationsSent = 0;
+    if (invitationsQuota > 0) {
+      console.log(`📍 PHASE 4: Invitations (quota: ${invitationsQuota})\n`);
+      try {
+        const { run: runConnect } = require('../actions/prospect-connect.js');
+        const result = await runConnect({ maxInvitations: invitationsQuota });
+        invitationsSent = result.sent || 0;
+        console.log(`✅ ${invitationsSent} invitations envoyées\n`);
+        for (let i = 0; i < invitationsSent; i++) {
+          logAction({ action: 'invitation', target: result.results[i]?.name || 'prospect', success: true });
+        }
+      } catch (e) {
+        console.log(`⚠️  Invitations: ${e.message}\n`);
+        logAction({ action: 'invitation', target: 'batch', success: false, error: e.message });
+      }
+    }
+
+    // Phase 5: Commentaires (à venir)
+    // const commentsQuota = sessionPlan?.comments_quota || 0;
+    // if (commentsQuota > 0) { ... }
     
   } catch (error) {
     console.error(`\n❌ Erreur: ${error.message}`);
@@ -451,11 +506,21 @@ async function runSession() {
     // Write result for test scripts
     const result = { success: likesCount >= target, likes: likesCount, target, likedPosts, duration: parseFloat(duration), ram: { start: startRAM, end: endRAM } };
     try { fs.writeFileSync('/tmp/session-result.json', JSON.stringify(result, null, 2)); } catch {}
-    
+
+    // Notif Telegram
+    try {
+      const { sendTelegram } = require('../utils/notify.js');
+      const emoji = likesCount >= target ? '✅' : '⚠️';
+      await sendTelegram(`${emoji} *Session LinkedIn terminée*\nLikes: ${likesCount}/${target} | Durée: ${duration}min | Score: ${successRate}%`);
+    } catch {}
+
+    // Ferme la page mais PAS Chrome (session persistante)
+    if (sessionPage) await closePage(sessionPage).catch(() => {});
+
     process.exit(likesCount >= target ? 0 : 1);
   }
 }
 
-export { runSession, connectCDP, extractPostsWithButtons, likePostAtomic, waitForFeedReady, safeEvaluate, injectTextRevealCSS };
+module.exports = { runSession, connectCDP, extractPostsWithButtons, likePostAtomic, waitForFeedReady, safeEvaluate, injectTextRevealCSS };
 
 runSession();

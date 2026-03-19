@@ -1,10 +1,14 @@
 /**
- * Browser Core — Connexion CDP au Chrome daemon
- * Méthode validée le 13/03/2026
+ * Browser Core — launchPersistentContext (Patchright + proxy Pi)
+ * Méthode validée le 18/03/2026
+ * RÈGLE : jamais de curl/axios/fetch direct vers LinkedIn — uniquement via ce browser
  */
+require('dotenv').config();
 const { chromium } = require('patchright');
+const path = require('path');
 
-const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://localhost:9222';
+const USER_DATA_DIR = process.env.CHROME_PROFILE_DIR
+  || path.resolve(__dirname, '../../linkedin-profile-mathieu');
 
 let _browser = null;
 let _page = null;
@@ -14,15 +18,11 @@ let _page = null;
  */
 async function getPage() {
   if (_page && !_page.isClosed()) return _page;
-  
-  _browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-  const contexts = _browser.contexts();
-  if (contexts.length === 0) throw new Error('No browser context found');
-  
-  const pages = contexts[0].pages();
-  if (pages.length === 0) throw new Error('No page found');
-  
-  _page = pages[0];
+  // Utilise le Chrome daemon persistant (même instance que session-runner)
+  const { getLinkedInPage } = require('./chrome-daemon.js');
+  const conn = await getLinkedInPage();
+  _browser = conn.browser;
+  _page = conn.page;
   return _page;
 }
 
@@ -30,51 +30,48 @@ async function getPage() {
  * Login natif si nécessaire (email/password sur /login)
  */
 async function ensureLoggedIn(page) {
-  const url = page.url();
-  
-  // Vérifier si on est déjà loggé
-  const isLogged = await page.evaluate(() => {
-    return document.cookie.includes('li_at');
-  });
-  
-  if (isLogged && url.includes('linkedin.com/feed')) return true;
-  
-  // Naviguer vers le feed pour tester
-  await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(3000);
-  
-  // Si redirigé vers login
-  if (page.url().includes('/login') || page.url().includes('/signup') || page.url().includes('/authwall')) {
-    console.log('🔐 Login nécessaire...');
-    
-    const email = process.env.LINKEDIN_EMAIL;
-    const password = process.env.LINKEDIN_PASSWORD;
-    if (!email || !password) throw new Error('LINKEDIN_EMAIL et LINKEDIN_PASSWORD requis dans .env');
-    
-    await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(3000);
-    
-    // Remplir email
-    await page.locator('#username').fill(email);
-    await page.waitForTimeout(500);
-    
-    // Remplir password
-    await page.locator('#password').fill(password);
-    await page.waitForTimeout(500);
-    
-    // Cliquer Sign in
-    await page.locator('button[type="submit"]').click();
-    await page.waitForTimeout(8000);
-    
-    if (page.url().includes('/feed')) {
-      console.log('✅ Login réussi');
-      return true;
-    } else {
-      throw new Error('Login échoué — URL: ' + page.url());
-    }
+  // Tester si on est sur le feed (session active via cookies du profil)
+  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await new Promise(r => setTimeout(r, 1000));
+
+  const urlAfterNav = page.url();
+
+  // Déjà connecté → LinkedIn redirige vers /feed
+  if (urlAfterNav.includes('/feed')) {
+    console.log('✅ Session active via cookies du profil');
+    return true;
   }
-  
-  return true;
+
+  // Login nécessaire via email/mot de passe
+  console.log('🔐 Login via email/mot de passe...');
+  const email = process.env.LINKEDIN_EMAIL;
+  const password = process.env.LINKEDIN_PASSWORD;
+  if (!email || !password) throw new Error('LINKEDIN_EMAIL et LINKEDIN_PASSWORD requis dans .env');
+
+  await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
+
+  // Formulaire reconnexion rapide (juste password) ou formulaire complet
+  const hasUsername = await page.locator('#username').isVisible({ timeout: 3000 }).catch(() => false);
+  if (hasUsername) {
+    await page.fill('#username', email);
+    await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
+  }
+
+  await page.waitForSelector('#password', { timeout: 10000 });
+  await page.fill('#password', password);
+  await new Promise(r => setTimeout(r, 600 + Math.random() * 500));
+  await page.click('button[type="submit"]');
+
+  try {
+    await page.waitForURL('**/feed/**', { timeout: 30000 });
+    console.log('✅ Connecté — feed chargé');
+    return true;
+  } catch {
+    const path = require('path');
+    const screenshotPath = path.resolve(__dirname, '../../logs/login-debug.png');
+    await page.screenshot({ path: screenshotPath }).catch(() => {});
+    throw new Error(`Login échoué — URL: ${page.url()}. Voir logs/login-debug.png`);
+  }
 }
 
 /**
@@ -160,6 +157,9 @@ async function closeBrowser() {
   }
 }
 
+// Alias pour compatibilité (launchPersistentContext retourne un BrowserContext)
+async function closeContext() { return closeBrowser(); }
+
 module.exports = {
   getPage,
   ensureLoggedIn,
@@ -169,6 +169,7 @@ module.exports = {
   humanDelay,
   humanClick,
   closeBrowser,
+  closeContext,
   COMPANY_ID,
   COMPANY_ADMIN_URL,
 };

@@ -285,13 +285,13 @@ class MorningPlanner {
         },
         payload: {
           kind: 'agentTurn',
-          message: `Exécute session LinkedIn ${sessionNum} : exec cd /root/.openclaw/workspace-prospection/linkedin-automation && node src/core/session-runner.js ${sessionNum}`,
-          timeoutSeconds: 600
+          message: `exec bash -c "cd /root/.openclaw/workspace-prospection/linkedin-automation && node src/core/session-runner.js ${sessionNum} >> logs/session-${sessionNum}.log 2>&1 &"`,
+          timeoutSeconds: 0
         },
         sessionTarget: 'isolated',
         enabled: true,
         delivery: {
-          mode: 'none'
+          mode: 'announce'
         }
       });
     }
