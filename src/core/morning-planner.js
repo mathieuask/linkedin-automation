@@ -371,7 +371,10 @@ class MorningPlanner {
       plan.notion_api_status = 'ok';
     }
     
-    // 3. Générer les crons à créer AVANT de sauvegarder le plan
+    // 3. Health check Chrome (sans restart — juste vérification)
+    await this.checkChromeHealth(plan);
+
+    // 4. Générer les crons à créer AVANT de sauvegarder le plan
     if (!plan.weekend && plan.sessions.length > 0) {
       plan.crons_to_create = this.getDailySessionCronsToCreate(plan.sessions);
     }
@@ -407,6 +410,59 @@ class MorningPlanner {
     console.log(`\n💾 Plan sauvegardé : ${planPath}`);
 
     return plan;
+  }
+
+  /**
+   * Vérifie que Chrome tourne et que la session LinkedIn est active.
+   * Ne fait RIEN si tout va bien. Alerte Telegram si problème.
+   */
+  async checkChromeHealth(plan) {
+    const http = require('http');
+    console.log('\n🔍 Health check Chrome...');
+
+    const chromeOk = await new Promise(resolve => {
+      const req = http.get('http://localhost:9222/json/version', res => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(3000, () => { req.destroy(); resolve(false); });
+    });
+
+    if (!chromeOk) {
+      console.log('❌ Chrome ne répond pas sur le port 9222');
+      plan.chrome_health = 'down';
+      const { sendTelegram } = require('./../../src/utils/notify');
+      await sendTelegram('⚠️ Chrome ne répond pas ce matin — sessions annulées. Relance chrome-daemon.js manuellement.').catch(() => {});
+      return;
+    }
+
+    // Chrome OK — vérifie si on est connecté à LinkedIn
+    const liOk = await new Promise(resolve => {
+      const req = http.get('http://localhost:9222/json', res => {
+        let data = '';
+        res.on('data', d => data += d);
+        res.on('end', () => {
+          try {
+            const tabs = JSON.parse(data);
+            const li = tabs.find(t => t.url && t.url.includes('linkedin.com'));
+            resolve(!!li);
+          } catch { resolve(false); }
+        });
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(3000, () => { req.destroy(); resolve(false); });
+    });
+
+    if (!liOk) {
+      console.log('⚠️  Chrome OK mais pas d\'onglet LinkedIn ouvert');
+      plan.chrome_health = 'no_linkedin_tab';
+      const { sendTelegram } = require('./../../src/utils/notify');
+      await sendTelegram('⚠️ Chrome tourne mais aucun onglet LinkedIn — le daemon a peut-être planté.').catch(() => {});
+      return;
+    }
+
+    console.log('✅ Chrome OK — session LinkedIn active');
+    plan.chrome_health = 'ok';
   }
 
 }
