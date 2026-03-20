@@ -305,8 +305,22 @@ function getSessionPlan(sessionNum) {
 }
 
 async function runSession() {
-  const { target, maxCycles, verbose } = parseArgs();
-  
+  const { target: targetArg, maxCycles, verbose } = parseArgs();
+  const { sessionNum } = parseArgs();
+
+  // Lire le likes_quota depuis le plan du jour (priorité sur --target)
+  let target = targetArg;
+  try {
+    const planFile = path.join(__dirname, '../../logs', `plan-${new Date().toISOString().split('T')[0]}.json`);
+    if (fs.existsSync(planFile)) {
+      const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+      const session = plan.sessions?.find(s => s.name === `session_${sessionNum}`);
+      if (session?.likes_quota !== undefined) {
+        target = session.likes_quota;
+      }
+    }
+  } catch { /* garde la valeur par défaut */ }
+
   console.log('🎯 Session Runner V5 — Unified (Race Condition Fix)\n');
   
   const startTime = Date.now();

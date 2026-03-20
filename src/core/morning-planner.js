@@ -187,9 +187,13 @@ class MorningPlanner {
     // Sélectionner les sessions actives selon phase
     const activeSessions = sessionTimes.slice(0, phase.sessions_per_day);
 
-    // Répartir les invitations sur les sessions
+    // Répartir les invitations et les likes sur les sessions
     const invitationsPerSession = this.distributeInvitations(
       quotas.invitations, 
+      activeSessions.length
+    );
+    const likesPerSession = this.distributeLikes(
+      quotas.likes,
       activeSessions.length
     );
 
@@ -201,7 +205,8 @@ class MorningPlanner {
       quotas,
       sessions: activeSessions.map((session, i) => ({
         ...session,
-        invitations_quota: invitationsPerSession[i]
+        invitations_quota: invitationsPerSession[i],
+        likes_quota: likesPerSession[i]
       }))
     };
   }
@@ -221,12 +226,21 @@ class MorningPlanner {
       Math.floor(total * 0.2)
     ];
     
-    // Le reste sur les sessions supplémentaires
-    while (distribution.length < sessionCount) {
-      distribution.push(0);
-    }
-    
+    while (distribution.length < sessionCount) distribution.push(0);
     return distribution;
+  }
+
+  /**
+   * Répartit les likes équitablement sur les sessions (arrondi au plus proche)
+   * Ex: 5 likes sur 2 sessions → [3, 2]
+   */
+  distributeLikes(total, sessionCount) {
+    if (sessionCount === 0) return [];
+    const base = Math.floor(total / sessionCount);
+    const remainder = total % sessionCount;
+    return Array.from({ length: sessionCount }, (_, i) =>
+      i < remainder ? base + 1 : base
+    );
   }
 
   /**
