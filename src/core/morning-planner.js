@@ -406,30 +406,9 @@ class MorningPlanner {
     
     console.log(`\n💾 Plan sauvegardé : ${planPath}`);
 
-    // Planifier 2 restarts Chrome aléatoires (matin + après-midi)
-    await this.scheduleRandomRestarts(plan);
-    
     return plan;
   }
 
-  /**
-   * Planifie 2 restarts Chrome AVANT les sessions
-   * Le restart est toujours le premier cron de chaque demi-journée
-   * - Matin : entre 8h10 et 8h50 (avant la 1ère session à 9h)
-   * - Après-midi : entre 14h10 et 14h50 (avant la 1ère session aprem à 15h)
-   */
-  async scheduleRandomRestarts(plan) {
-    const morningMin = 10 + Math.floor(Math.random() * 40);  // 8h10-8h50
-    const afternoonMin = 10 + Math.floor(Math.random() * 40); // 14h10-14h50
-
-    plan.chrome_restarts = [
-      `08:${String(morningMin).padStart(2, '0')}`,
-      `14:${String(afternoonMin).padStart(2, '0')}`,
-    ];
-
-    console.log(`\n🔄 Restarts Chrome : ${plan.chrome_restarts.join(' et ')} (Paris)`);
-    console.log('   → Avant sessions matin (9h) et après-midi (15h)');
-  }
 }
 
 // Si exécuté directement
