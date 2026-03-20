@@ -13,7 +13,8 @@ const { getPage, ensureLoggedIn, humanDelay } = require('../core/browser.js');
 const { searchPeople, getProfile } = require('../core/linkedin-api.js');
 const { sendConnect } = require('../core/linkedin-actions.js');
 const { scoreProfile } = require('../core/scoring.js');
-const { generateSmartSearch, getRandomStrategy, getStrategyWeights } = require('../core/smart-search.js');
+const { generateSmartSearch, getRandomStrategy } = require('../core/smart-search.js');
+const { getStrategyWeights } = require('../core/search-learner.js');
 const { logSearchResult, logInvitationOutcome } = require('../core/search-learner.js');
 
 /**
