@@ -402,15 +402,16 @@ class MorningPlanner {
     if (plan.weekend) {
       console.log('🏖️  Weekend : Repos ou session unique');
     } else {
-      console.log(`\n📊 Quotas du jour :`);
-      console.log(`  📤 Invitations : ${plan.quotas.invitations}`);
-      console.log(`  👍 Likes : ${plan.quotas.likes}`);
-      console.log(`  💬 Commentaires : ${plan.quotas.comments}`);
-      console.log(`  📝 Posts : ${plan.quotas.posts} ${plan.post_validated ? '(✅ validé, 19h00)' : '(⏸️ aucun validé)'}`);
+      console.log(`\n📊 Total du jour : 📤 ${plan.quotas.invitations} invitations | 👍 ${plan.quotas.likes} likes | 💬 ${plan.quotas.comments} commentaires | 📝 ${plan.quotas.posts} post${plan.post_validated ? ' (✅ 19h00)' : ''}`);
       
-      console.log(`\n⏰ Sessions planifiées : ${plan.sessions.length}`);
-      plan.sessions.forEach(s => {
-        console.log(`  ${s.time} — ${s.name} (${s.invitations_quota || 0} inv)`);
+      console.log(`\n✅ ${plan.sessions.length} sessions programmées :`);
+      plan.sessions.forEach((s, i) => {
+        const utcH = String(parseInt(s.time.split(':')[0]) - 1).padStart(2, '0');
+        const utcM = s.time.split(':')[1];
+        console.log(`\n${i + 1}. Session ${i + 1} — ${s.time} (UTC ${utcH}:${utcM})`);
+        console.log(`   • 👍 Likes : ${s.likes_quota || 0}`);
+        console.log(`   • 📤 Invitations : ${s.invitations_quota || 0}`);
+        console.log(`   • Actions : ${s.actions.join(', ')}`);
       });
       
       if (plan.crons_to_create && plan.crons_to_create.length > 0) {
