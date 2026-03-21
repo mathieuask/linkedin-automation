@@ -451,32 +451,8 @@ class MorningPlanner {
       return;
     }
 
-    // Chrome OK — vérifie si on est connecté à LinkedIn
-    const liOk = await new Promise(resolve => {
-      const req = http.get('http://localhost:9222/json', res => {
-        let data = '';
-        res.on('data', d => data += d);
-        res.on('end', () => {
-          try {
-            const tabs = JSON.parse(data);
-            const li = tabs.find(t => t.url && t.url.includes('linkedin.com'));
-            resolve(!!li);
-          } catch { resolve(false); }
-        });
-      });
-      req.on('error', () => resolve(false));
-      req.setTimeout(3000, () => { req.destroy(); resolve(false); });
-    });
-
-    if (!liOk) {
-      console.log('⚠️  Chrome OK mais pas d\'onglet LinkedIn ouvert');
-      plan.chrome_health = 'no_linkedin_tab';
-      const { sendTelegram } = require('./../../src/utils/notify');
-      await sendTelegram('⚠️ Chrome tourne mais aucun onglet LinkedIn — le daemon a peut-être planté.').catch(() => {});
-      return;
-    }
-
-    console.log('✅ Chrome OK — session LinkedIn active');
+    // Chrome OK — c'est suffisant (l'onglet LinkedIn est ouvert par session-runner à la demande)
+    console.log('✅ Chrome OK — prêt pour les sessions');
     plan.chrome_health = 'ok';
   }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * LinkedIn Daemon Production
+ * LinkedIn Daemon Production (CJS)
  * 
  * Garde Chrome + LinkedIn ouvert 24/7
  * Géré par PM2 (pas systemd)
@@ -9,13 +9,12 @@
  * Usage: pm2 start daemon.js --name linkedin-daemon
  */
 
-import { chromium } from 'patchright';
-import applyFingerprintEvasion from './src/fingerprint-evasion.js';
-import { setupResourceBlocking } from './src/utils/resource-blocker.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const { chromium } = require('patchright');
+const path = require('path');
+const fs = require('fs');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Load .env
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 class LinkedInDaemon {
   constructor() {
@@ -28,21 +27,20 @@ class LinkedInDaemon {
   async start() {
     console.log('🚀 LinkedIn Daemon Production - Démarrage...\n');
     
-    const profilePath = path.resolve(__dirname, 'linkedin-profile');
+    const profilePath = path.resolve(__dirname, 'linkedin-profile-mathieu');
+    console.log(`📁 Profil: ${profilePath}`);
     
     try {
-      // Launch Chrome avec session persistante
       console.log('🔧 Lancement Chrome (Patchright + session persistante)...');
-      // PROXY OBLIGATOIRE (IP résidentielle Pi)
+      
       this.browser = await chromium.launchPersistentContext(profilePath, {
-        channel: 'chrome',  // Chrome réel (pas Chromium)
-        headless: false,    // LinkedIn détecte headless
-        viewport: null,     // Résolution native
+        headless: true,
+        viewport: { width: 1920, height: 1080 },
         timezoneId: 'Europe/Paris',
         locale: 'fr-FR',
         colorScheme: 'light',
         proxy: {
-          server: 'socks5://127.0.0.1:1080'  // Proxy Pi TOUJOURS ACTIF
+          server: 'socks5://127.0.0.1:1080'
         },
         args: [
           '--no-first-run',
@@ -51,60 +49,67 @@ class LinkedInDaemon {
           '--disable-background-timer-throttling',
           '--disable-dev-shm-usage',
           '--no-sandbox',
-          '--remote-debugging-port=9222'  // CDP endpoint
+          '--remote-debugging-port=9222',
+          '--lang=fr-FR',
+          '--window-size=1920,1080',
         ]
       });
       
       console.log('✅ Chrome lancé');
-      
-      // CDP endpoint
       this.cdpEndpoint = `http://localhost:9222`;
       console.log(`📡 CDP endpoint: ${this.cdpEndpoint}`);
-      
-      // Fingerprint evasion
-      await applyFingerprintEvasion(this.browser, { spoofPlatform: false });
-      console.log('🔒 Fingerprint evasion appliqué');
       
       // Page LinkedIn
       this.page = this.browser.pages()[0] || await this.browser.newPage();
       
-      // Blocage ressources (images, fonts, analytics)
-      await setupResourceBlocking(this.browser);
+      // Inject cookies avant navigation
+      console.log('🍪 Injection cookies LinkedIn...');
+      await this.browser.addCookies([
+        {
+          name: 'li_at',
+          value: process.env.LI_AT || '',
+          domain: '.linkedin.com',
+          path: '/',
+          httpOnly: true,
+          secure: true,
+          sameSite: 'None',
+        },
+        {
+          name: 'JSESSIONID',
+          value: `"${process.env.JSESSIONID || ''}"`,
+          domain: '.linkedin.com',
+          path: '/',
+          httpOnly: false,
+          secure: true,
+          sameSite: 'None',
+        }
+      ]);
       
-      // Navigation LinkedIn (1× seulement)
+      // Navigation LinkedIn
       console.log('\n🔗 Navigation LinkedIn...');
       const navStart = Date.now();
       
       await this.page.goto('https://www.linkedin.com/feed/', {
         waitUntil: 'domcontentloaded',
         timeout: 60000
-      });
+      }).catch(e => console.log('⚠️  Nav warning:', e.message.split('\n')[0]));
       
       const navTime = Date.now() - navStart;
-      console.log(`✅ Feed LinkedIn chargé en ${(navTime / 1000).toFixed(1)}s`);
+      console.log(`⏱️  Navigation: ${(navTime / 1000).toFixed(1)}s`);
       
-      // Attendre stabilisation (LinkedIn peut faire des redirections)
-      await this.page.waitForTimeout(5000);
+      await new Promise(r => setTimeout(r, 5000));
       
-      // Vérifier login
       const currentUrl = this.page.url();
       console.log(`📍 URL finale: ${currentUrl}`);
       
-      if (currentUrl.includes('authwall') || currentUrl.includes('login') || currentUrl.includes('checkpoint') || currentUrl.includes('uas/')) {
-        console.error(`❌ Page de login détectée: ${currentUrl}`);
-        console.error(`\n🔑 ACTION REQUISE:`);
-        console.error(`   1. Arrêter PM2: pm2 stop linkedin-daemon`);
-        console.error(`   2. Login manuel sur LinkedIn`);
-        console.error(`   3. Extraire nouveaux cookies`);
-        console.error(`   4. Relancer: pm2 start linkedin-daemon\n`);
-        
-        // NE PAS throw pour éviter restart loop
-        // Juste attendre que l'utilisateur relance manuellement
-        console.log('⏸️  Daemon en pause (attente login manuel)...');
-        
-        // Garder Chrome ouvert pour login manuel
-        await new Promise(() => {}); // Infinite wait
-        return;
+      if (currentUrl.includes('authwall') || currentUrl.includes('login') || currentUrl.includes('checkpoint') || currentUrl.includes('uas/') || currentUrl.includes('chromewebdata')) {
+        console.log(`⚠️  Session expirée (${currentUrl}) — tentative login email/password...`);
+        const loginOk = await this.loginWithCredentials();
+        if (!loginOk) {
+          console.error('❌ Login échoué — daemon en pause (pas de restart loop)');
+          await new Promise(() => {});
+          return;
+        }
       }
       
       console.log('✅ Session LinkedIn active\n');
@@ -115,47 +120,90 @@ class LinkedInDaemon {
       console.log('   Status: Ready for sessions');
       console.log('═══════════════════════════════════════════════════\n');
       
-      // Health check loop
       this.startHealthCheck();
       
-      // Keep alive
       process.on('SIGINT', () => this.shutdown());
       process.on('SIGTERM', () => this.shutdown());
       
     } catch (error) {
       console.error('❌ Erreur démarrage daemon:', error.message);
-      console.error(error.stack);
-      process.exit(1);
+      // Exit 0 pour éviter restart loop infini (PM2 restart si exit non-zero)
+      process.exit(0);
+    }
+  }
+
+  async loginWithCredentials() {
+    try {
+      const email = process.env.LINKEDIN_EMAIL;
+      const password = process.env.LINKEDIN_PASSWORD;
+      if (!email || !password) {
+        console.error('❌ LINKEDIN_EMAIL ou LINKEDIN_PASSWORD manquant dans .env');
+        return false;
+      }
+
+      console.log('🔑 Navigation vers /login...');
+      await this.page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Détecte le formulaire (reconnect-rapide ou full login)
+      const emailField = await this.page.$('#username') || await this.page.$('input[name="session_key"]') || await this.page.$('input[type="email"]');
+      if (emailField) {
+        await emailField.fill(email);
+        await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+      }
+
+      const passField = await this.page.$('#password') || await this.page.$('input[name="session_password"]') || await this.page.$('input[type="password"]');
+      if (!passField) {
+        console.error('❌ Champ mot de passe introuvable');
+        return false;
+      }
+      await passField.fill(password);
+      await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+      await passField.press('Enter');
+      await new Promise(r => setTimeout(r, 5000));
+
+      const url = this.page.url();
+      console.log(`📍 URL après login: ${url}`);
+
+      if (url.includes('feed') || url.includes('mynetwork') || url.includes('in/')) {
+        console.log('✅ Login réussi !');
+        return true;
+      }
+      if (url.includes('checkpoint')) {
+        console.error('⚠️  Checkpoint LinkedIn — vérification manuelle requise');
+        return false;
+      }
+      console.error(`❌ URL inattendue après login: ${url}`);
+      return false;
+    } catch (e) {
+      console.error('❌ Erreur login:', e.message);
+      return false;
     }
   }
 
   startHealthCheck() {
-    // Health check toutes les 30 minutes
     setInterval(async () => {
       try {
         console.log(`🏥 Health check (${new Date().toISOString()})...`);
         
-        // Vérifier page active
         if (!this.page || this.page.isClosed()) {
           console.error('❌ Page fermée - Restart requis');
           process.exit(1);
         }
         
-        // Vérifier URL LinkedIn
         const url = this.page.url();
         if (url.includes('authwall') || url.includes('login')) {
-          console.error('❌ Session expirée - Restart requis');
-          process.exit(1);
+          console.error('❌ Session expirée - Pause (pas de restart loop)');
+          await new Promise(() => {}); // Pause infinie
+          return;
         }
         
-        // Vérifier mémoire
-        const memUsage = process.memoryUsage();
-        const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-        console.log(`   Mémoire: ${memMB} MB`);
+        const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+        console.log(`   Mémoire: ${memMB} MB | URL: ${url.substring(0, 60)}`);
         
         if (memMB > 1500) {
-          console.warn('⚠️  Mémoire élevée (>1.5 GB) - Restart recommandé');
-          process.exit(0);  // PM2 va restart
+          console.warn('⚠️  Mémoire élevée (>1.5 GB) - Restart');
+          process.exit(0);
         }
         
         this.lastHealthCheck = Date.now();
@@ -163,27 +211,21 @@ class LinkedInDaemon {
         
       } catch (error) {
         console.error('❌ Health check échoué:', error.message);
-        process.exit(1);  // PM2 va restart
+        process.exit(1);
       }
-    }, 30 * 60 * 1000);  // 30 minutes
+    }, 30 * 60 * 1000); // 30 min
   }
 
   async shutdown() {
     console.log('\n🛑 Shutdown daemon...');
-    
-    if (this.browser) {
-      console.log('   Fermeture browser...');
-      await this.browser.close().catch(() => {});
-    }
-    
+    if (this.browser) await this.browser.close().catch(() => {});
     console.log('✅ Daemon arrêté');
     process.exit(0);
   }
 }
 
-// Démarrage
 const daemon = new LinkedInDaemon();
 daemon.start().catch(error => {
   console.error('❌ Erreur fatale:', error);
-  process.exit(1);
+  process.exit(0); // exit 0 = pas de restart loop PM2
 });
