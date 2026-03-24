@@ -126,13 +126,15 @@ async function waitForFeedReady(page, maxWait = 60000) {
 
     // Toutes les 10s si toujours vide : recharge la page doucement
     if (attempt % 10 === 0 && postCount === 0) {
-      console.log(`🔄 Feed toujours vide (${Math.round((Date.now() - start) / 1000)}s) — rechargement...`);
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.log(`🔄 Feed toujours vide (${elapsed}s) — rechargement... [URL: ${page.url()}]`);
       await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
       await new Promise(r => setTimeout(r, 4000 + Math.random() * 2000));
     }
   }
 
-  console.log(`⚠️  Feed toujours vide après ${maxWait / 1000}s`);
+  const elapsed = Math.round((Date.now() - start) / 1000);
+  console.log(`⚠️  Feed toujours vide après ${elapsed}s — URL finale: ${page.url()}`);
   return false;
 }
 
@@ -288,6 +290,104 @@ async function likePostAtomic(page, humanMouse, post) {
   return { success: false, reason: 'max_retries_exhausted' };
 }
 
+// ─── Feed Error Diagnostics ────────────────────────────────────
+
+/**
+ * Capture un snapshot détaillé quand le feed ne charge pas.
+ * Sauvegarde dans logs/feed-errors/YYYY-MM-DD_HH-MM-SS.json
+ * 100% passif — aucune action LinkedIn, aucun risque de shadow ban.
+ */
+async function captureFeedDiagnostics(page, context = {}) {
+  const logsDir = path.join(__dirname, '../../logs/feed-errors');
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filePath = path.join(logsDir, `${ts}.json`);
+
+  let diag = {
+    timestamp: new Date().toISOString(),
+    context,
+    ram_mb: getChromeMemoryMB(),
+    url: null,
+    page_title: null,
+    dom: {
+      occludable_updates: 0,
+      data_urn_elements: 0,
+      feed_shared_updates: 0,
+      main_feed_present: false,
+      scaffold_present: false,
+    },
+    cookies: {
+      has_jsessionid: false,
+      has_li_at: false,
+    },
+    network: {
+      voyager_feed_status: null,
+      voyager_feed_error: null,
+    },
+    html_preview: null,
+    error: null,
+  };
+
+  try {
+    diag.url = page.url();
+    diag.page_title = await page.title().catch(() => null);
+
+    // DOM snapshot
+    diag.dom = await page.evaluate(() => ({
+      occludable_updates: document.querySelectorAll('.occludable-update').length,
+      data_urn_elements: document.querySelectorAll('[data-urn]').length,
+      feed_shared_updates: document.querySelectorAll('.feed-shared-update-v2').length,
+      main_feed_present: !!document.querySelector('.scaffold-layout__main'),
+      scaffold_present: !!document.querySelector('.scaffold-layout'),
+      body_classes: document.body?.className?.substring(0, 200) || '',
+      visible_error: document.querySelector('.error-container, .not-found, [data-test-id="error"]')?.textContent?.trim()?.substring(0, 200) || null,
+    })).catch(e => ({ error: e.message }));
+
+    // Cookies (présence seulement, pas les valeurs)
+    diag.cookies = await page.evaluate(() => ({
+      has_jsessionid: document.cookie.includes('JSESSIONID'),
+      has_li_at: document.cookie.includes('li_at'),
+      cookie_count: document.cookie.split(';').length,
+    })).catch(() => ({ error: 'evaluate_failed' }));
+
+    // Test Voyager API — read-only, même requête que getFeed
+    diag.network = await page.evaluate(async () => {
+      try {
+        const csrf = document.cookie.match(/JSESSIONID="?([^;"]*)"?/)?.[1] || '';
+        const r = await fetch('/voyager/api/feed/updatesV2?q=feed&count=3&start=0', {
+          headers: { 'csrf-token': csrf, 'x-restli-protocol-version': '2.0.0' },
+          credentials: 'include',
+        });
+        const text = await r.text();
+        return {
+          voyager_feed_status: r.status,
+          voyager_feed_ok: r.ok,
+          response_length: text.length,
+          elements_count: (() => { try { return JSON.parse(text).elements?.length ?? -1; } catch { return -1; } })(),
+          response_preview: text.substring(0, 300),
+        };
+      } catch (e) {
+        return { voyager_feed_error: e.message };
+      }
+    }).catch(e => ({ evaluate_error: e.message }));
+
+    // HTML preview de la zone feed (100 chars maxi)
+    diag.html_preview = await page.evaluate(() => {
+      const feed = document.querySelector('.scaffold-layout__main, #main, main');
+      return feed?.innerHTML?.substring(0, 500) || document.body?.innerHTML?.substring(0, 500) || null;
+    }).catch(() => null);
+
+  } catch (e) {
+    diag.error = e.message;
+  }
+
+  fs.writeFileSync(filePath, JSON.stringify(diag, null, 2));
+  console.log(`🔍 Diagnostic sauvegardé: logs/feed-errors/${ts}.json`);
+  console.log(`   URL: ${diag.url} | DOM updates: ${diag.dom?.occludable_updates ?? '?'} | Voyager: ${diag.network?.voyager_feed_status ?? '?'} | Cookies: li_at=${diag.cookies?.has_li_at ?? '?'}`);
+  return diag;
+}
+
 // ─── CDP via Chrome Daemon ──────────────────────────────────────
 
 const { getLinkedInPage, closePage } = require('./chrome-daemon.js');
@@ -385,7 +485,8 @@ async function runSession() {
     
     const feedReady = await waitForFeedReady(page);
     if (!feedReady) {
-      console.log('❌ Feed vide, abandon');
+      console.log('❌ Feed vide, abandon — capture diagnostics...');
+      await captureFeedDiagnostics(page, { phase: 'initial_feed_wait', ram: getChromeMemoryMB() });
       process.exit(1);
     }
     
@@ -558,6 +659,6 @@ async function runSession() {
   }
 }
 
-module.exports = { runSession, connectCDP, extractPostsWithButtons, likePostAtomic, waitForFeedReady, safeEvaluate, injectTextRevealCSS };
+module.exports = { runSession, connectCDP, extractPostsWithButtons, likePostAtomic, waitForFeedReady, safeEvaluate, injectTextRevealCSS, captureFeedDiagnostics };
 
 runSession();
