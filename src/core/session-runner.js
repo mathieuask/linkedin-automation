@@ -99,13 +99,19 @@ async function injectTextRevealCSS(page) {
 
 // ─── Wait for Feed Ready ───────────────────────────────────────
 
-async function waitForFeedReady(page, maxWait = 15000) {
+async function waitForFeedReady(page, maxWait = 60000) {
   const start = Date.now();
   console.log('⏳ Attente feed LinkedIn...');
 
+  // 1. Attendre que la page soit vraiment chargée (réseau calme)
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+
+  let attempt = 0;
   while (Date.now() - start < maxWait) {
+    attempt++;
     const postCount = await page.evaluate(() =>
-      document.querySelectorAll('.occludable-update').length
+      document.querySelectorAll('.occludable-update, [data-urn], .feed-shared-update-v2').length
     ).catch(() => 0);
 
     if (postCount >= 2) {
@@ -113,13 +119,17 @@ async function waitForFeedReady(page, maxWait = 15000) {
       return true;
     }
 
-    if (postCount === 0) {
-      await page.evaluate(() => window.scrollBy(0, 100)).catch(() => {});
-      await new Promise(r => setTimeout(r, 500));
-      await page.evaluate(() => window.scrollBy(0, -100)).catch(() => {});
-    }
+    // Scroll progressif façon humain pour déclencher le lazy loading
+    const scrollAmount = 80 + Math.floor(Math.random() * 120); // 80-200px
+    await page.evaluate((px) => window.scrollBy({ top: px, behavior: 'smooth' }), scrollAmount).catch(() => {});
+    await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
-    await new Promise(r => setTimeout(r, 1000));
+    // Toutes les 10s si toujours vide : recharge la page doucement
+    if (attempt % 10 === 0 && postCount === 0) {
+      console.log(`🔄 Feed toujours vide (${Math.round((Date.now() - start) / 1000)}s) — rechargement...`);
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+      await new Promise(r => setTimeout(r, 4000 + Math.random() * 2000));
+    }
   }
 
   console.log(`⚠️  Feed toujours vide après ${maxWait / 1000}s`);
@@ -326,6 +336,19 @@ async function runSession() {
   const startTime = Date.now();
   const startRAM = getChromeMemoryMB();
   console.log(`📊 RAM Chrome: ${startRAM} MB`);
+
+  // Si RAM > 4 GB : redémarre Chrome avant la session (évite le feed vide lié à la surcharge)
+  if (startRAM > 4000) {
+    console.log(`⚠️  RAM élevée (${startRAM} MB > 4 GB) — redémarrage Chrome propre...`);
+    try {
+      execSync('pm2 restart linkedin-daemon --update-env', { stdio: 'inherit' });
+      await new Promise(r => setTimeout(r, 15000 + Math.random() * 5000)); // Attente réel démarrage
+      console.log(`✅ Chrome redémarré — RAM: ${getChromeMemoryMB()} MB`);
+    } catch (e) {
+      console.warn(`⚠️  Restart Chrome échoué: ${e.message} — on continue quand même`);
+    }
+  }
+
   console.log(`🎯 Objectif: ${target} likes, max ${maxCycles} cycles\n`);
   
   let browser;
