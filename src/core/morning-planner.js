@@ -385,8 +385,8 @@ class MorningPlanner {
       plan.notion_api_status = 'ok';
     }
     
-    // 3. Health check Chrome (sans restart — juste vérification)
-    await this.checkChromeHealth(plan);
+    // 3. Restart Chrome propre chaque matin (RAM à zéro avant les sessions)
+    await this.restartChromeFresh(plan);
 
     // 4. Générer les crons à créer AVANT de sauvegarder le plan
     if (!plan.weekend && plan.sessions.length > 0) {
@@ -428,32 +428,51 @@ class MorningPlanner {
   }
 
   /**
-   * Vérifie que Chrome tourne et que la session LinkedIn est active.
-   * Ne fait RIEN si tout va bien. Alerte Telegram si problème.
+   * Redémarre Chrome proprement chaque matin pour repartir avec RAM à zéro.
+   * Vérifie ensuite que LinkedIn est accessible (login si nécessaire).
    */
-  async checkChromeHealth(plan) {
-    const http = require('http');
-    console.log('\n🔍 Health check Chrome...');
+  async restartChromeFresh(plan) {
+    const { execSync } = require('child_process');
+    console.log('\n🔄 Restart Chrome matinal (RAM à zéro avant sessions)...');
 
-    const chromeOk = await new Promise(resolve => {
-      const req = http.get('http://localhost:9222/json/version', res => {
-        resolve(res.statusCode === 200);
+    try {
+      execSync('pm2 restart linkedin-daemon --update-env', { stdio: 'pipe' });
+      // Attendre que Chrome soit prêt (15-20s)
+      await new Promise(r => setTimeout(r, 18000));
+
+      // Vérifier CDP
+      const http = require('http');
+      const cdpOk = await new Promise(resolve => {
+        const req = http.get('http://localhost:9222/json/version', res => resolve(res.statusCode === 200));
+        req.on('error', () => resolve(false));
+        req.setTimeout(5000, () => { req.destroy(); resolve(false); });
       });
-      req.on('error', () => resolve(false));
-      req.setTimeout(3000, () => { req.destroy(); resolve(false); });
-    });
 
-    if (!chromeOk) {
-      console.log('❌ Chrome ne répond pas sur le port 9222');
-      plan.chrome_health = 'down';
-      const { sendTelegram } = require('./../../src/utils/notify');
-      await sendTelegram('⚠️ Chrome ne répond pas ce matin — sessions annulées. Relance chrome-daemon.js manuellement.').catch(() => {});
-      return;
+      if (!cdpOk) {
+        console.log('❌ Chrome ne répond pas après restart');
+        plan.chrome_health = 'down';
+        return;
+      }
+
+      // Tester login LinkedIn
+      const { getLinkedInPage, closePage } = require('./chrome-daemon.js');
+      const { page } = await getLinkedInPage();
+      const url = page.url();
+      await closePage(page);
+
+      if (url.includes('/feed')) {
+        const ram = parseInt(execSync("ps aux | grep -E 'chrom(e|ium)' | grep -v grep | awk '{sum+=$6}END{print sum}'").toString()) / 1024;
+        console.log(`✅ Chrome OK — session LinkedIn active — RAM: ${Math.round(ram)} MB`);
+        plan.chrome_health = 'ok';
+        plan.chrome_ram_start = Math.round(ram);
+      } else {
+        console.log(`⚠️ URL inattendue après login: ${url}`);
+        plan.chrome_health = 'login_failed';
+      }
+    } catch (e) {
+      console.error('❌ Restart Chrome échoué:', e.message);
+      plan.chrome_health = 'error';
     }
-
-    // Chrome OK — c'est suffisant (l'onglet LinkedIn est ouvert par session-runner à la demande)
-    console.log('✅ Chrome OK — prêt pour les sessions');
-    plan.chrome_health = 'ok';
   }
 
 }
