@@ -181,6 +181,14 @@ class LinkedInDaemon {
     }
   }
 
+  getChromeRAMmb() {
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync("ps aux | grep -E 'chrom(e|ium)' | grep -v grep | awk '{sum += $6} END {print sum}'").toString().trim();
+      return Math.round(parseInt(out || '0') / 1024);
+    } catch { return 0; }
+  }
+
   startHealthCheck() {
     setInterval(async () => {
       try {
@@ -192,18 +200,26 @@ class LinkedInDaemon {
         }
         
         const url = this.page.url();
-        if (url.includes('authwall') || url.includes('login')) {
-          console.error('❌ Session expirée - Pause (pas de restart loop)');
-          await new Promise(() => {}); // Pause infinie
+
+        // Session expirée → tenter le login avant de paniquer
+        if (url.includes('authwall') || url.includes('login') || url.includes('checkpoint')) {
+          console.log('⚠️  Session expirée détectée — tentative re-login...');
+          const ok = await this.loginWithCredentials();
+          if (!ok) {
+            console.error('❌ Re-login échoué — pause daemon');
+            await new Promise(() => {});
+          }
           return;
         }
         
-        const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-        console.log(`   Mémoire: ${memMB} MB | URL: ${url.substring(0, 60)}`);
+        // RAM Chrome (pas Node) — si > 3.5 GB on redémarre proprement
+        const chromeMB = this.getChromeRAMmb();
+        console.log(`   RAM Chrome: ${chromeMB} MB | URL: ${url.substring(0, 60)}`);
         
-        if (memMB > 1500) {
-          console.warn('⚠️  Mémoire élevée (>1.5 GB) - Restart');
-          process.exit(0);
+        if (chromeMB > 3500) {
+          console.warn(`⚠️  RAM Chrome élevée (${chromeMB} MB > 3.5 GB) — restart propre avec re-login`);
+          // Exit 1 → PM2 redémarre → start() est appelé → loginWithCredentials()
+          process.exit(1);
         }
         
         this.lastHealthCheck = Date.now();

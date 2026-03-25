@@ -437,16 +437,10 @@ async function runSession() {
   const startRAM = getChromeMemoryMB();
   console.log(`📊 RAM Chrome: ${startRAM} MB`);
 
-  // Si RAM > 4 GB : redémarre Chrome avant la session (évite le feed vide lié à la surcharge)
+  // RAM élevée : on log mais on ne redémarre PAS Chrome depuis session-runner
+  // (le daemon PM2 gère le restart — sinon on perd la session LinkedIn)
   if (startRAM > 4000) {
-    console.log(`⚠️  RAM élevée (${startRAM} MB > 4 GB) — redémarrage Chrome propre...`);
-    try {
-      execSync('pm2 restart linkedin-daemon --update-env', { stdio: 'inherit' });
-      await new Promise(r => setTimeout(r, 15000 + Math.random() * 5000)); // Attente réel démarrage
-      console.log(`✅ Chrome redémarré — RAM: ${getChromeMemoryMB()} MB`);
-    } catch (e) {
-      console.warn(`⚠️  Restart Chrome échoué: ${e.message} — on continue quand même`);
-    }
+    console.log(`⚠️  RAM élevée (${startRAM} MB) — on continue, le daemon gérera le restart en fin de session`);
   }
 
   console.log(`🎯 Objectif: ${target} likes, max ${maxCycles} cycles\n`);
