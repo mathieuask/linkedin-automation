@@ -111,13 +111,12 @@ async function waitForFeedReady(page, maxWait = 60000) {
   while (Date.now() - start < maxWait) {
     attempt++;
 
-    // Sélecteurs stables : boutons aria-label (LinkedIn change ses class names mais pas les aria-labels)
+    // Sélecteurs stables : boutons réaction directs (LinkedIn 2025-2026)
     const postCount = await page.evaluate(() => {
-      const likeButtons = document.querySelectorAll(
-        'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"], button[aria-label*="J\'aime"], button[aria-label*="Like"]'
-      ).length;
-      // Fallback : scroll_height > 2000 = des posts sont chargés
-      const hasContent = document.body.scrollHeight > 2000;
+      const likeButtons = Array.from(document.querySelectorAll(
+        'button[aria-label*="État du bouton de réaction"], button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
+      )).filter(b => (b.getAttribute('aria-label') || '').includes('aucune') || (b.getAttribute('aria-label') || '').includes('Réagir')).length;
+      const hasContent = document.body.scrollHeight > 1500;
       return likeButtons > 0 ? likeButtons : (hasContent ? 1 : 0);
     }).catch(() => 0);
 
@@ -149,10 +148,10 @@ async function waitForFeedReady(page, maxWait = 60000) {
 
 async function extractPostsWithButtons(page) {
   return await safeEvaluate(page, () => {
-    // Ancre sur les boutons aria-label (stable même si LinkedIn change ses class names)
+    // Bouton like direct : "État du bouton de réaction" (LinkedIn 2025-2026)
     const likeButtons = Array.from(document.querySelectorAll(
-      'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
-    ));
+      'button[aria-label*="État du bouton de réaction"], button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
+    )).filter(b => (b.getAttribute('aria-label') || '').includes('aucune réaction') || (b.getAttribute('aria-label') || '').includes('Réagir'));
 
     return likeButtons.map((btn, index) => {
       // Remonter pour trouver le container du post (cherche un ancêtre avec du contenu significatif)
@@ -212,10 +211,10 @@ async function likePostAtomic(page, humanMouse, post) {
         if (selector) {
           btn = document.querySelector(selector);
         } else {
-          // Approche aria-label : récupérer le Nème bouton "Réagir avec"
+          // Bouton réaction direct "État du bouton de réaction : aucune réaction"
           const all = Array.from(document.querySelectorAll(
-            'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
-          ));
+            'button[aria-label*="État du bouton de réaction"], button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
+          )).filter(b => (b.getAttribute('aria-label') || '').includes('aucune') || (b.getAttribute('aria-label') || '').includes('Réagir'));
           btn = all[btnIndex];
         }
         if (!btn) return { found: false };
@@ -256,10 +255,12 @@ async function likePostAtomic(page, humanMouse, post) {
           const el = document.querySelector(`div[data-urn="${urn}"]`);
           if (el) return !!el.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
         }
-        // Sinon : vérifier que le Nème bouton like est en aria-pressed=true
-        const all = Array.from(document.querySelectorAll('button[aria-label*="Réagir avec"], button[aria-label*="React with Like"], button[aria-pressed="true"][aria-label*="aime"]'));
-        // Si n'importe quel bouton est pressed, on accepte (après un like, le bouton change de label)
-        return all.some(b => b.getAttribute('aria-pressed') === 'true');
+        // Après like : label change vers "J'aime" ou "Bravo", etc.
+        const all = Array.from(document.querySelectorAll('button[aria-label*="État du bouton de réaction"]'));
+        return all.some(b => {
+          const label = b.getAttribute('aria-label') || '';
+          return label.includes('J\'aime') || label.includes('Bravo') || label.includes('Soutenir') || label.includes('Intéressant');
+        });
       }, { urn: post.postUrn, btnIndex: post.buttonIndex ?? 0 });
 
       if (verified) {
