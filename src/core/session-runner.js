@@ -110,21 +110,28 @@ async function waitForFeedReady(page, maxWait = 60000) {
   let attempt = 0;
   while (Date.now() - start < maxWait) {
     attempt++;
-    const postCount = await page.evaluate(() =>
-      document.querySelectorAll('.occludable-update, [data-urn], .feed-shared-update-v2').length
-    ).catch(() => 0);
 
-    if (postCount >= 2) {
-      console.log(`✅ Feed prêt (${postCount} posts en ${Math.round((Date.now() - start) / 1000)}s)`);
+    // Sélecteurs stables : boutons aria-label (LinkedIn change ses class names mais pas les aria-labels)
+    const postCount = await page.evaluate(() => {
+      const likeButtons = document.querySelectorAll(
+        'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"], button[aria-label*="J\'aime"], button[aria-label*="Like"]'
+      ).length;
+      // Fallback : scroll_height > 2000 = des posts sont chargés
+      const hasContent = document.body.scrollHeight > 2000;
+      return likeButtons > 0 ? likeButtons : (hasContent ? 1 : 0);
+    }).catch(() => 0);
+
+    if (postCount >= 1) {
+      console.log(`✅ Feed prêt (${postCount} boutons like en ${Math.round((Date.now() - start) / 1000)}s)`);
       return true;
     }
 
     // Scroll progressif façon humain pour déclencher le lazy loading
-    const scrollAmount = 80 + Math.floor(Math.random() * 120); // 80-200px
+    const scrollAmount = 80 + Math.floor(Math.random() * 120);
     await page.evaluate((px) => window.scrollBy({ top: px, behavior: 'smooth' }), scrollAmount).catch(() => {});
     await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
-    // Toutes les 10s si toujours vide : recharge la page doucement
+    // Toutes les 10s si toujours vide : recharge la page
     if (attempt % 10 === 0 && postCount === 0) {
       const elapsed = Math.round((Date.now() - start) / 1000);
       console.log(`🔄 Feed toujours vide (${elapsed}s) — rechargement... [URL: ${page.url()}]`);
@@ -142,38 +149,43 @@ async function waitForFeedReady(page, maxWait = 60000) {
 
 async function extractPostsWithButtons(page) {
   return await safeEvaluate(page, () => {
-    const posts = Array.from(document.querySelectorAll('.occludable-update'));
-    
-    return posts
-      .map((el, index) => {
-        // data-urn est sur un div enfant
-        const urnEl = el.querySelector('[data-urn]');
-        const postUrn = urnEl ? urnEl.dataset.urn : null;
+    // Ancre sur les boutons aria-label (stable même si LinkedIn change ses class names)
+    const likeButtons = Array.from(document.querySelectorAll(
+      'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
+    ));
 
-        const text = el.querySelector('.update-components-text span')?.textContent?.trim() || '';
-        const author = el.querySelector('.update-components-actor__name span')?.textContent?.trim() || '';
-        const title = el.querySelector('.update-components-actor__description span')?.textContent?.trim() || '';
+    return likeButtons.map((btn, index) => {
+      // Remonter pour trouver le container du post (cherche un ancêtre avec du contenu significatif)
+      let container = btn.parentElement;
+      for (let i = 0; i < 15; i++) {
+        if (!container) break;
+        if (container.offsetHeight > 150 && container.querySelectorAll('button').length >= 2) break;
+        container = container.parentElement;
+      }
 
-        // Bouton like : "Réagir avec \"J'aime\"" = pas encore liké
-        const likeBtn = el.querySelector('button[aria-label*="Réagir avec"]');
-        const isAlreadyLiked = !likeBtn; // Si le bouton "Réagir" n'est pas là, c'est déjà liké
+      // Extraire texte et auteur depuis le container
+      const text = container?.innerText?.substring(0, 1500) || '';
+      const authorEl = container?.querySelector('[aria-label*="profil"], a[href*="/in/"]');
+      const author = authorEl?.innerText?.trim() || authorEl?.getAttribute('aria-label') || '';
 
-        return {
-          index,
-          text: text.substring(0, 1500),
-          textLength: text.length,
-          author,
-          title,
-          hasLikeButton: !!likeBtn,
-          isAlreadyLiked,
-          reactions: '0',
-          postUrn,
-          buttonSelector: (likeBtn && postUrn)
-            ? `[data-urn="${postUrn}"] button[aria-label*="Réagir avec"]`
-            : null,
-        };
-      })
-      .filter(p => p.hasLikeButton && p.postUrn);
+      // Générer un ID unique basé sur la position dans le DOM
+      const btnRect = btn.getBoundingClientRect();
+      const postId = `post_${index}_${Math.round(btnRect.top)}`;
+
+      return {
+        index,
+        text: text.substring(0, 1500),
+        textLength: text.length,
+        author,
+        title: '',
+        hasLikeButton: true,
+        isAlreadyLiked: false,
+        reactions: '0',
+        postUrn: postId, // pas de data-urn disponible, on utilise un ID positionnel
+        buttonSelector: null, // on utilisera un index-based click
+        buttonIndex: index,
+      };
+    });
   });
 }
 
@@ -194,9 +206,18 @@ async function likePostAtomic(page, humanMouse, post) {
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
-      // STEP 1: Find button, scroll into view, get coords
-      const btnInfo = await safeEvaluate(page, (selector) => {
-        const btn = document.querySelector(selector);
+      // STEP 1: Find button by index (aria-label based, stable) ou par selector legacy
+      const btnInfo = await safeEvaluate(page, ({ selector, btnIndex }) => {
+        let btn;
+        if (selector) {
+          btn = document.querySelector(selector);
+        } else {
+          // Approche aria-label : récupérer le Nème bouton "Réagir avec"
+          const all = Array.from(document.querySelectorAll(
+            'button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
+          ));
+          btn = all[btnIndex];
+        }
         if (!btn) return { found: false };
         btn.scrollIntoView({ behavior: 'instant', block: 'center' });
         const rect = btn.getBoundingClientRect();
@@ -207,7 +228,7 @@ async function likePostAtomic(page, humanMouse, post) {
           w: rect.width,
           h: rect.height,
         };
-      }, post.buttonSelector);
+      }, { selector: post.buttonSelector, btnIndex: post.buttonIndex ?? 0 });
 
       if (!btnInfo.found) {
         if (attempt < 5) {
@@ -228,12 +249,18 @@ async function likePostAtomic(page, humanMouse, post) {
       // STEP 3: Wait for LinkedIn processing
       await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
 
-      // STEP 4: Verify
-      const verified = await safeEvaluate(page, (urn) => {
-        const el = document.querySelector(`div[data-urn="${urn}"]`);
-        if (!el) return false;
-        return !!el.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
-      }, post.postUrn);
+      // STEP 4: Verify — chercher un bouton like en aria-pressed=true près du clic
+      const verified = await safeEvaluate(page, ({ urn, btnIndex }) => {
+        // D'abord essai data-urn (ancien format)
+        if (urn && !urn.startsWith('post_')) {
+          const el = document.querySelector(`div[data-urn="${urn}"]`);
+          if (el) return !!el.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
+        }
+        // Sinon : vérifier que le Nème bouton like est en aria-pressed=true
+        const all = Array.from(document.querySelectorAll('button[aria-label*="Réagir avec"], button[aria-label*="React with Like"], button[aria-pressed="true"][aria-label*="aime"]'));
+        // Si n'importe quel bouton est pressed, on accepte (après un like, le bouton change de label)
+        return all.some(b => b.getAttribute('aria-pressed') === 'true');
+      }, { urn: post.postUrn, btnIndex: post.buttonIndex ?? 0 });
 
       if (verified) {
         return {
