@@ -384,7 +384,7 @@ async function captureFeedDiagnostics(page, context = {}) {
 // ─── CDP via Chrome Daemon ──────────────────────────────────────
 
 const { getLinkedInPage, closePage } = require('./chrome-daemon.js');
-const { logAction } = require('./action-logger.js');
+// action-logger.js remplacé par logger.js — ne plus utiliser logAction
 
 async function connectCDP() {
   const { browser, page } = await getLinkedInPage();
@@ -475,12 +475,26 @@ async function runSession() {
     await new Promise(r => setTimeout(r, 2000));
     await injectTextRevealCSS(page);
     
-    const feedReady = await waitForFeedReady(page);
+    let feedReady = await waitForFeedReady(page);
     if (!feedReady) {
-      log.feed({ action: 'feed_empty_abort', session_num: sessionNum });
-      console.log('❌ Feed vide, abandon — capture diagnostics...');
+      log.feed({ action: 'feed_empty', session_num: sessionNum, attempt: 1 });
+      console.log('⚠️  Feed vide — health monitor immédiat...');
       await captureFeedDiagnostics(page, { phase: 'initial_feed_wait', ram: getChromeMemoryMB() });
-      process.exit(1);
+
+      // Health monitor MAINTENANT : probe sélecteurs + auto-fix
+      await analyzeSession({ status: 'error', likesOk: 0, likesFail: target, feedEmpty: true, chromeRam: getChromeMemoryMB() }).catch(() => {});
+
+      // Retry après le fix éventuel
+      console.log('🔄 Retry feed après analyse...');
+      await new Promise(r => setTimeout(r, 4000));
+      feedReady = await waitForFeedReady(page, 30000);
+
+      if (!feedReady) {
+        log.feed({ action: 'feed_empty_abort', session_num: sessionNum, attempt: 2 });
+        console.log('❌ Feed toujours vide après fix — session abandonnée');
+        process.exit(1);
+      }
+      console.log('✅ Feed récupéré après fix');
     }
     
     // Phase 1: Observation
@@ -567,12 +581,18 @@ async function runSession() {
         likedPosts.push(result.post);
         log.action({ action: 'like_ok', reason: result.reason, attempts: result.attempts, count: likesCount, target, post: result.post });
         console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}`);
-        logAction({ action: 'like', target: top.author || top.postUrn, success: true, method_used: result.reason });
       } else {
         log.action({ action: 'like_fail', reason: result.reason, count: likesCount, target });
         console.log(`   ❌ Échoué: ${result.reason}`);
         consecutiveFailures++;
-        logAction({ action: 'like', target: top.postUrn, success: false, error: result.reason });
+
+        // 3 échecs de suite → health monitor immédiat, pas à la fin
+        if (consecutiveFailures >= 3) {
+          console.log('⚠️  3 échecs consécutifs — health monitor immédiat...');
+          log.action({ action: 'consecutive_fails_trigger', count: consecutiveFailures });
+          await analyzeSession({ status: 'partial', likesOk: likesCount, likesFail: consecutiveFailures, feedEmpty: false, chromeRam: getChromeMemoryMB() }).catch(() => {});
+          consecutiveFailures = 0; // Reset — le fix est peut-être appliqué, on continue
+        }
       }
       
       console.log('');
@@ -601,11 +621,9 @@ async function runSession() {
         invitationsSent = result.sent || 0;
         console.log(`✅ ${invitationsSent} invitations envoyées\n`);
         for (let i = 0; i < invitationsSent; i++) {
-          logAction({ action: 'invitation', target: result.results[i]?.name || 'prospect', success: true });
         }
       } catch (e) {
         console.log(`⚠️  Invitations: ${e.message}\n`);
-        logAction({ action: 'invitation', target: 'batch', success: false, error: e.message });
       }
     }
 
