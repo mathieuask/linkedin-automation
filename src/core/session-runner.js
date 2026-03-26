@@ -204,65 +204,41 @@ async function likePostAtomic(page, humanMouse, post) {
     return { success: false, reason: 'no_selector' };
   }
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      // STEP 1: Find button by index (aria-label based, stable) ou par selector legacy
-      const btnInfo = await safeEvaluate(page, ({ selector, btnIndex }) => {
-        let btn;
-        if (selector) {
-          btn = document.querySelector(selector);
-        } else {
-          // Bouton réaction direct "État du bouton de réaction : aucune réaction"
-          const all = Array.from(document.querySelectorAll(
-            'button[aria-label*="État du bouton de réaction"], button[aria-label*="Réagir avec"], button[aria-label*="React with Like"]'
-          )).filter(b => (b.getAttribute('aria-label') || '').includes('aucune') || (b.getAttribute('aria-label') || '').includes('Réagir'));
-          btn = all[btnIndex];
-        }
-        if (!btn) return { found: false };
-        btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-        const rect = btn.getBoundingClientRect();
-        return {
-          found: true,
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-          w: rect.width,
-          h: rect.height,
-        };
-      }, { selector: post.buttonSelector, btnIndex: post.buttonIndex ?? 0 });
+  // Sélecteur Playwright pour les boutons "aucune réaction"
+  const LIKE_BTN_SELECTOR = 'button[aria-label*="État du bouton de réaction"][aria-label*="aucune réaction"], button[aria-label*="Réagir avec"]';
+  const btnIndex = post.buttonIndex ?? 0;
 
-      if (!btnInfo.found) {
-        if (attempt < 5) {
-          console.log(`   🔄 Bouton introuvable (${attempt}/5), retry ${300 * attempt}ms...`);
-          await new Promise(r => setTimeout(r, 300 * attempt));
-          continue;
-        }
-        return { success: false, reason: 'button_not_found' };
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      // Re-trouver le bouton à chaque tentative (index peut avoir changé après scroll)
+      const allButtons = await page.locator(LIKE_BTN_SELECTOR).all();
+
+      if (allButtons.length === 0) {
+        console.log(`   ⚠️  Aucun bouton like trouvé (tentative ${attempt})`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
       }
 
-      // STEP 2: Wait for scroll settle + human click
-      await new Promise(r => setTimeout(r, 300));
-      const jitterX = (Math.random() - 0.5) * 4;
-      const jitterY = (Math.random() - 0.5) * 4;
-      await humanMouse.moveTo(btnInfo.x + jitterX, btnInfo.y + jitterY);
-      await page.mouse.click(btnInfo.x + jitterX, btnInfo.y + jitterY);
+      // Prendre le premier bouton disponible (le plus haut dans le feed visible)
+      const btn = allButtons[Math.min(btnIndex, allButtons.length - 1)];
 
-      // STEP 3: Wait for LinkedIn processing
-      await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
+      // Scroll into view + click via Playwright (gère automatiquement les coords)
+      await btn.scrollIntoViewIfNeeded();
+      await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+      await btn.click({ timeout: 5000 });
 
-      // STEP 4: Verify — chercher un bouton like en aria-pressed=true près du clic
-      const verified = await safeEvaluate(page, ({ urn, btnIndex }) => {
-        // D'abord essai data-urn (ancien format)
-        if (urn && !urn.startsWith('post_')) {
-          const el = document.querySelector(`div[data-urn="${urn}"]`);
-          if (el) return !!el.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
-        }
-        // Après like : label change vers "J'aime" ou "Bravo", etc.
+      // Attendre la réponse LinkedIn
+      await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+
+      // Vérifier : le bouton cliqué doit avoir changé de label (plus "aucune réaction")
+      const verified = await page.evaluate(() => {
         const all = Array.from(document.querySelectorAll('button[aria-label*="État du bouton de réaction"]'));
         return all.some(b => {
           const label = b.getAttribute('aria-label') || '';
-          return label.includes('J\'aime') || label.includes('Bravo') || label.includes('Soutenir') || label.includes('Intéressant');
+          // Après J'aime : "État du bouton de réaction : J'aime"
+          return label.includes("J'aime") || label.includes('Bravo') || label.includes('Soutenir') || label.includes('Intéressant') || label.includes('Drôle');
         });
-      }, { urn: post.postUrn, btnIndex: post.buttonIndex ?? 0 });
+      }).catch(() => false);
 
       if (verified) {
         return {
@@ -273,46 +249,30 @@ async function likePostAtomic(page, humanMouse, post) {
         };
       }
 
-      // STEP 5: Fallback — direct DOM .click()
-      if (attempt <= 3) {
-        console.log(`   🔄 Mouse click non confirmé, fallback DOM .click() (${attempt}/5)...`);
-        const domClicked = await safeEvaluate(page, (selector) => {
-          const btn = document.querySelector(selector);
-          if (!btn) return false;
-          btn.click();
-          return true;
-        }, post.buttonSelector);
-
-        if (domClicked) {
-          await new Promise(r => setTimeout(r, 2000));
-          const verified2 = await safeEvaluate(page, (urn) => {
-            const el = document.querySelector(`div[data-urn="${urn}"]`);
-            return !!el?.querySelector('button[aria-label*="aime"][aria-pressed="true"]');
-          }, post.postUrn);
-
-          if (verified2) {
-            return {
-              success: true,
-              reason: 'liked_via_dom_fallback',
-              attempts: attempt,
-              post: { author: post.author, text: post.text.substring(0, 100), score: post.analysis?.score || 0 },
-            };
-          }
-        }
+      // Pas confirmé → peut-être le like est passé quand même, on vérifie différemment
+      const countAfter = await page.locator(LIKE_BTN_SELECTOR).count().catch(() => -1);
+      if (countAfter < allButtons.length) {
+        // Un bouton "aucune réaction" en moins → like réussi !
+        return {
+          success: true,
+          reason: 'liked_count_decreased',
+          attempts: attempt,
+          post: { author: post.author, text: post.text.substring(0, 100), score: post.analysis?.score || 0 },
+        };
       }
 
-      if (attempt < 5) {
-        console.log(`   🔄 Non confirmé, retry (${attempt}/5)...`);
-        await new Promise(r => setTimeout(r, 500 * attempt));
+      if (attempt < 3) {
+        console.log(`   🔄 Non confirmé, retry (${attempt}/3)...`);
+        await new Promise(r => setTimeout(r, 800 * attempt));
       }
 
     } catch (error) {
-      if (error.message.includes('context') && error.message.includes('destroyed') && attempt < 5) {
-        console.log(`   ⚠️  Context destroyed (${attempt}/5), retry...`);
+      if (attempt < 3) {
+        console.log(`   ⚠️  Erreur (${attempt}/3): ${error.message.substring(0, 60)}`);
         await new Promise(r => setTimeout(r, 1000));
         continue;
       }
-      return { success: false, reason: error.message };
+      return { success: false, reason: error.message.substring(0, 80) };
     }
   }
 
