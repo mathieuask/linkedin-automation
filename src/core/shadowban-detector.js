@@ -8,6 +8,7 @@
  * - Alertes Telegram si score < 50
  */
 
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 

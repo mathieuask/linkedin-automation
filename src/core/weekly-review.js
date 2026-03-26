@@ -4,6 +4,7 @@
  * et proposer des ajustements au système
  */
 
+require('dotenv').config();
 const {
   getWeeklyInsights,
   generateLearningReport,
