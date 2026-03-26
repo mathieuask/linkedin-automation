@@ -199,7 +199,8 @@ async function extractPostsWithButtons(page) {
  *   5. Retry up to 5×
  */
 async function likePostAtomic(page, humanMouse, post) {
-  if (!post.buttonSelector || !post.postUrn) {
+  // buttonSelector OU buttonIndex requis (nouveau format aria-label)
+  if (post.buttonSelector === undefined && post.buttonIndex === undefined) {
     return { success: false, reason: 'no_selector' };
   }
 
