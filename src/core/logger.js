@@ -117,6 +117,67 @@ function purgeOldLogs() {
   }
 }
 
+// ─── Stats pour daily-report ───────────────────────────────────
+
+function readDayLogs(dateStr) {
+  const dir = path.join(LOGS_ROOT, dateStr);
+  const sessionFile = path.join(dir, 'session.json');
+  const errorFile = path.join(dir, 'errors.json');
+  const lines = [];
+
+  for (const f of [sessionFile, errorFile]) {
+    if (!fs.existsSync(f)) continue;
+    fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).forEach(l => {
+      try { lines.push(JSON.parse(l)); } catch {}
+    });
+  }
+  return lines;
+}
+
+function getTodayStats() {
+  const today = new Date().toISOString().split('T')[0];
+  const lines = readDayLogs(today);
+  const state = readState();
+
+  const likes_ok   = lines.filter(l => l.action === 'like_ok').length;
+  const likes_fail = lines.filter(l => l.action === 'like_fail').length;
+  const inv_ok     = lines.filter(l => l.action === 'invitation_ok').length;
+  const errors     = lines.filter(l => l.cat === 'error');
+  const resolved   = errors.filter(l => l.resolved === true).length;
+
+  return {
+    date: today,
+    likes: { ok: likes_ok, fail: likes_fail },
+    invitations: { ok: inv_ok },
+    errors: {
+      total: errors.length,
+      resolved,
+      unresolved: errors.length - resolved,
+      types: errors.reduce((acc, e) => { acc[e.reason || 'unknown'] = (acc[e.reason || 'unknown'] || 0) + 1; return acc; }, {}),
+    },
+    consecutiveErrors: state.consecutiveErrors || 0,
+    lastLikeOk: state.lastLikeOk,
+  };
+}
+
+function getWeekStats() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    const lines = readDayLogs(dateStr);
+    days.push({
+      date: dateStr,
+      likes_ok:   lines.filter(l => l.action === 'like_ok').length,
+      likes_fail: lines.filter(l => l.action === 'like_fail').length,
+      errors:     lines.filter(l => l.cat === 'error').length,
+      resolved:   lines.filter(l => l.cat === 'error' && l.resolved).length,
+    });
+  }
+  return { days };
+}
+
 // ─── Exports ───────────────────────────────────────────────────
 
-module.exports = { log, readState, updateState, purgeOldLogs };
+module.exports = { log, readState, updateState, purgeOldLogs, getTodayStats, getWeekStats };

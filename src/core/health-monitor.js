@@ -8,7 +8,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { log, readState, updateState } = require('./logger.js');
+const { log, readState, updateState, getTodayStats } = require('./logger.js');
 const { sendTelegram } = require('../utils/notify.js');
 
 // ─── Types d'erreurs ───────────────────────────────────────────
@@ -28,7 +28,9 @@ async function analyzeSession(sessionResult) {
   const state = readState();
   const { status, likesOk, likesFail, errors = [], feedEmpty, chromeRam } = sessionResult;
 
-  log.session({ action: 'health_check_start', sessionResult });
+  // Générer un ID unique pour tracer erreur → résolution
+  const errorId = `err_${Date.now()}`;
+  log.session({ action: 'health_check_start', errorId, sessionResult });
 
   const diagnosis = {
     errorTypes: [],
@@ -82,11 +84,16 @@ async function analyzeSession(sessionResult) {
 
   // Exécuter les auto-fixes si nécessaire
   if (diagnosis.recommendation === 'probe_and_fix_selectors' || diagnosis.recommendation === 'run_selector_probe') {
-    await probeAndFixSelectors();
+    log.error({ action: 'error_detected', errorId, types: diagnosis.errorTypes, resolved: false });
+    const fixed = await probeAndFixSelectors();
+    log.error({ action: fixed ? 'error_resolved' : 'error_unresolved', errorId, resolved: fixed });
+    if (fixed) console.log(`✅ Erreur ${errorId} résolue automatiquement`);
+    else console.log(`⚠️  Erreur ${errorId} non résolue — escalade en cours`);
   }
 
   // Escalader si nécessaire
   if (diagnosis.needsEscalation.length > 0) {
+    log.error({ action: 'error_escalated', errorId, escalations: diagnosis.needsEscalation, resolved: false });
     await escalate(diagnosis);
   }
 
@@ -133,7 +140,6 @@ async function probeAndFixSelectors() {
     await p.close();
 
     if (likeLabel) {
-      // Construire le nouveau sélecteur
       let newSelector;
       if (likeLabel.includes('aucune réaction')) {
         newSelector = 'button[aria-label*="État du bouton de réaction"][aria-label*="aucune réaction"]';
@@ -149,30 +155,26 @@ async function probeAndFixSelectors() {
       if (newSelector !== oldSelector) {
         updateState({ selectors: { ...state.selectors, likeButton: newSelector } });
         log.selector({ action: 'selector_updated', old: oldSelector, new: newSelector });
-
-        // Patcher session-runner.js automatiquement
         await patchSessionRunnerSelector(oldSelector, newSelector);
-
         await sendTelegram(
-          `🔧 Auto-fix sélecteur LinkedIn\n` +
-          `Ancien: \`${oldSelector}\`\n` +
-          `Nouveau: \`${newSelector}\`\n` +
-          `Labels trouvés: ${ariaLabels.filter(l => l.includes('réaction')).join(', ')}`
+          `🔧 Auto-fix sélecteur LinkedIn\nAncien: \`${oldSelector}\`\nNouveau: \`${newSelector}\``
         ).catch(() => {});
+        return true; // ✅ Erreur résolue
       } else {
         log.selector({ action: 'selector_unchanged', selector: newSelector });
+        return true; // Sélecteur déjà à jour — pas besoin de fix
       }
     } else {
       log.selector({ action: 'probe_no_like_button_found', labels: ariaLabels });
       await sendTelegram(
-        `⚠️ LinkedIn: aucun bouton like trouvé sur le feed.\n` +
-        `Labels présents: ${ariaLabels.slice(0, 10).join(', ')}\n` +
-        `Action requise: vérifier manuellement.`
+        `⚠️ LinkedIn: aucun bouton like trouvé.\nLabels: ${ariaLabels.slice(0, 8).join(', ')}\nAction requise.`
       ).catch(() => {});
+      return false; // ❌ Non résolu
     }
 
   } catch (e) {
     log.error({ action: 'probe_failed', error: e.message });
+    return false;
   }
 }
 

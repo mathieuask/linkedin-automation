@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { getTodayStats, getWeekStats } = require('./action-logger.js');
+const { getTodayStats, getWeekStats } = require('./logger.js');
 const { getSelfHealStats } = require('./self-heal.js');
 const https = require('https');
 const path = require('path');
