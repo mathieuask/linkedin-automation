@@ -448,6 +448,22 @@ async function runSession() {
   let likesCount = 0;
   const likedPosts = [];
   let consecutiveFailures = 0;
+
+  // Déclenche le health monitor sur n'importe quelle erreur, n'importe quelle action
+  async function onError(actionType, reason, context = {}) {
+    log.error({ action: 'error_detected', actionType, reason, ...context });
+    console.log(`⚠️  Erreur [${actionType}]: ${reason} — health monitor immédiat...`);
+    await analyzeSession({
+      status: 'error',
+      actionType,
+      reason,
+      likesOk: likesCount,
+      likesFail: target - likesCount,
+      feedEmpty: actionType === 'feed',
+      chromeRam: getChromeMemoryMB(),
+      ...context,
+    }).catch(() => {});
+  }
   
   try {
     console.log(`📡 Connexion via Chrome Daemon...`);
@@ -478,11 +494,8 @@ async function runSession() {
     let feedReady = await waitForFeedReady(page);
     if (!feedReady) {
       log.feed({ action: 'feed_empty', session_num: sessionNum, attempt: 1 });
-      console.log('⚠️  Feed vide — health monitor immédiat...');
       await captureFeedDiagnostics(page, { phase: 'initial_feed_wait', ram: getChromeMemoryMB() });
-
-      // Health monitor MAINTENANT : probe sélecteurs + auto-fix
-      await analyzeSession({ status: 'error', likesOk: 0, likesFail: target, feedEmpty: true, chromeRam: getChromeMemoryMB() }).catch(() => {});
+      await onError('feed', 'feed_empty_timeout', { session_num: sessionNum, attempt: 1 });
 
       // Retry après le fix éventuel
       console.log('🔄 Retry feed après analyse...');
@@ -585,14 +598,7 @@ async function runSession() {
         log.action({ action: 'like_fail', reason: result.reason, count: likesCount, target });
         console.log(`   ❌ Échoué: ${result.reason}`);
         consecutiveFailures++;
-
-        // 3 échecs de suite → health monitor immédiat, pas à la fin
-        if (consecutiveFailures >= 3) {
-          console.log('⚠️  3 échecs consécutifs — health monitor immédiat...');
-          log.action({ action: 'consecutive_fails_trigger', count: consecutiveFailures });
-          await analyzeSession({ status: 'partial', likesOk: likesCount, likesFail: consecutiveFailures, feedEmpty: false, chromeRam: getChromeMemoryMB() }).catch(() => {});
-          consecutiveFailures = 0; // Reset — le fix est peut-être appliqué, on continue
-        }
+        await onError('like', result.reason, { cycle, likesCount });
       }
       
       console.log('');
@@ -624,6 +630,7 @@ async function runSession() {
         }
       } catch (e) {
         console.log(`⚠️  Invitations: ${e.message}\n`);
+        await onError('invitation', e.message);
       }
     }
 
@@ -635,7 +642,7 @@ async function runSession() {
     console.error(`\n❌ Erreur: ${error.message}`);
     if (verbose) console.error(error.stack);
     log.error({ action: 'session_crash', error: error.message, stack: error.stack?.substring(0, 500) });
-    await analyzeSession({ status: 'error', likesOk: likesCount, likesFail: target - likesCount, feedEmpty: true, chromeRam: getChromeMemoryMB(), errors: [error.message] }).catch(() => {});
+    await onError('session_crash', error.message).catch(() => {});
   } finally {
     const endRAM = getChromeMemoryMB();
     const duration = ((Date.now() - startTime) / 60000).toFixed(1);
