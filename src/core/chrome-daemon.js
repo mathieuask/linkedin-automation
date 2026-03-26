@@ -98,6 +98,14 @@ async function getLinkedInPage() {
   // Créer une nouvelle page (hérite des cookies du profil)
   const page = await ctx.newPage();
 
+  // Mock visibilityState → LinkedIn ne rend les posts qu'en page "visible"
+  await page.addInitScript(() => {
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'hasFocus', { value: () => true, configurable: true });
+  });
+
   // Naviguer vers le feed (cookies actifs → pas de login nécessaire)
   console.log('🔗 Navigation vers le feed...');
   await page.goto('https://www.linkedin.com/feed/', {

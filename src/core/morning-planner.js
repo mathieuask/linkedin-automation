@@ -293,19 +293,21 @@ class MorningPlanner {
       
       crons.push({
         name: `LinkedIn Session ${sessionNum} (${session.time})`,
+        agentId: 'prospection',
         schedule: {
           kind: 'at',
           at: isoTimestamp
         },
         payload: {
           kind: 'agentTurn',
-          message: `exec bash -c "cd /root/.openclaw/workspace-prospection/linkedin-automation && node src/core/session-runner.js ${sessionNum} >> logs/session-${sessionNum}.log 2>&1 &"`,
-          timeoutSeconds: 0
+          message: `exec bash -c "cd /root/.openclaw/workspace-prospection/linkedin-automation && node src/core/session-runner.js ${sessionNum} >> logs/session-${sessionNum}.log 2>&1"`,
+          timeoutSeconds: 300
         },
         sessionTarget: 'isolated',
         enabled: true,
         delivery: {
-          mode: 'announce'
+          mode: 'announce',
+          channel: 'last'
         }
       });
     }
