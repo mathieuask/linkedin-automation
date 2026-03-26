@@ -23,6 +23,14 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { log, readState, updateState, purgeOldLogs } = require('./logger.js');
+
+// Supabase bridge (optionnel)
+let sb = null;
+try {
+  if (process.env.SUPABASE_URL && process.env.USER_ID) {
+    sb = require('../supabase-client');
+  }
+} catch (e) { /* pas de Supabase configuré */ }
 const { analyzeSession } = require('./health-monitor.js');
 
 require('dotenv').config();
@@ -593,6 +601,8 @@ async function runSession() {
         consecutiveFailures = 0;
         likedPosts.push(result.post);
         log.action({ action: 'like_ok', reason: result.reason, attempts: result.attempts, count: likesCount, target, post: result.post });
+        if (sb) sb.incrementAnalytics({ likes_given: 1 }).catch(() => {});
+        if (sb) sb.logAction('engagement', 'like', result.post?.author || 'unknown').catch(() => {});
         console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}`);
       } else {
         log.action({ action: 'like_fail', reason: result.reason, count: likesCount, target });
@@ -626,7 +636,8 @@ async function runSession() {
         const result = await runConnect({ maxInvitations: invitationsQuota });
         invitationsSent = result.sent || 0;
         console.log(`✅ ${invitationsSent} invitations envoyées\n`);
-        for (let i = 0; i < invitationsSent; i++) {
+        if (sb && invitationsSent > 0) {
+          sb.incrementAnalytics({ invitations_sent: invitationsSent }).catch(() => {});
         }
       } catch (e) {
         console.log(`⚠️  Invitations: ${e.message}\n`);

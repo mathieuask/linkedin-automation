@@ -16,6 +16,17 @@ const fs = require('fs');
 // Load .env
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
+// Supabase bridge (optionnel — si USER_ID configuré)
+let supabaseClient = null;
+try {
+  if (process.env.SUPABASE_URL && process.env.USER_ID) {
+    supabaseClient = require('./src/supabase-client');
+    console.log('✅ Supabase bridge chargé');
+  }
+} catch (e) {
+  console.log('⚠️  Supabase bridge non disponible:', e.message);
+}
+
 class LinkedInDaemon {
   constructor() {
     this.browser = null;
@@ -119,7 +130,22 @@ class LinkedInDaemon {
       console.log('   URL: https://www.linkedin.com/feed/');
       console.log('   Status: Ready for sessions');
       console.log('═══════════════════════════════════════════════════\n');
-      
+
+      // Supabase — marquer session active
+      if (supabaseClient) {
+        await supabaseClient.updateSession({ status: 'active', last_action_at: new Date().toISOString() }).catch(() => {});
+        const { startRealtimeBridge } = require('./src/core/realtime-bridge');
+        startRealtimeBridge({
+          onToggle: (automation) => {
+            console.log(`📡 Toggle: ${automation.type} → ${automation.active ? 'ON' : 'OFF'}`);
+          },
+          onJob: async (job) => {
+            console.log(`📡 New job: ${job.type}`);
+          }
+        });
+        console.log('📡 Realtime bridge démarré\n');
+      }
+
       this.startHealthCheck();
       
       process.on('SIGINT', () => this.shutdown());
