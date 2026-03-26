@@ -575,7 +575,7 @@ async function runSession() {
       
       // Find best likeable candidate
       const candidates = analyzed
-        .filter(p => p.analysis.shouldLike && p.hasLikeButton && !p.isAlreadyLiked && p.buttonSelector)
+        .filter(p => p.analysis.shouldLike && p.hasLikeButton && !p.isAlreadyLiked && (p.buttonSelector !== undefined))
         .sort((a, b) => b.analysis.score - a.analysis.score);
       
       if (candidates.length === 0) {
