@@ -22,6 +22,8 @@ const { analyzePost, getAnalysisStats } = require('../utils/post-analyzer.js');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { log, readState, updateState, purgeOldLogs } = require('./logger.js');
+const { analyzeSession } = require('./health-monitor.js');
 
 require('dotenv').config();
 
@@ -121,7 +123,9 @@ async function waitForFeedReady(page, maxWait = 60000) {
     }).catch(() => 0);
 
     if (postCount >= 1) {
-      console.log(`✅ Feed prêt (${postCount} boutons like en ${Math.round((Date.now() - start) / 1000)}s)`);
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.log(`✅ Feed prêt (${postCount} boutons like en ${elapsed}s)`);
+      log.feed({ action: 'feed_ready', buttons_found: postCount, elapsed_s: elapsed });
       return true;
     }
 
@@ -421,15 +425,20 @@ async function runSession() {
   } catch { /* garde la valeur par défaut */ }
 
   console.log('🎯 Session Runner V5 — Unified (Race Condition Fix)\n');
-  
+
+  // Purge logs > 7 jours au démarrage
+  purgeOldLogs();
+
   const startTime = Date.now();
   const startRAM = getChromeMemoryMB();
   console.log(`📊 RAM Chrome: ${startRAM} MB`);
 
-  // RAM élevée : on log mais on ne redémarre PAS Chrome depuis session-runner
-  // (le daemon PM2 gère le restart — sinon on perd la session LinkedIn)
+  log.chrome({ action: 'session_start', ram_mb: startRAM, session_num: sessionNum, target });
+  log.session({ action: 'start', session_num: sessionNum, target, max_cycles: maxCycles });
+
   if (startRAM > 4000) {
     console.log(`⚠️  RAM élevée (${startRAM} MB) — on continue, le daemon gérera le restart en fin de session`);
+    log.chrome({ action: 'high_ram_warning', ram_mb: startRAM, threshold: 4000 });
   }
 
   console.log(`🎯 Objectif: ${target} likes, max ${maxCycles} cycles\n`);
@@ -468,6 +477,7 @@ async function runSession() {
     
     const feedReady = await waitForFeedReady(page);
     if (!feedReady) {
+      log.feed({ action: 'feed_empty_abort', session_num: sessionNum });
       console.log('❌ Feed vide, abandon — capture diagnostics...');
       await captureFeedDiagnostics(page, { phase: 'initial_feed_wait', ram: getChromeMemoryMB() });
       process.exit(1);
@@ -555,9 +565,11 @@ async function runSession() {
         likesCount++;
         consecutiveFailures = 0;
         likedPosts.push(result.post);
+        log.action({ action: 'like_ok', reason: result.reason, attempts: result.attempts, count: likesCount, target, post: result.post });
         console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}`);
         logAction({ action: 'like', target: top.author || top.postUrn, success: true, method_used: result.reason });
       } else {
+        log.action({ action: 'like_fail', reason: result.reason, count: likesCount, target });
         console.log(`   ❌ Échoué: ${result.reason}`);
         consecutiveFailures++;
         logAction({ action: 'like', target: top.postUrn, success: false, error: result.reason });
@@ -604,6 +616,8 @@ async function runSession() {
   } catch (error) {
     console.error(`\n❌ Erreur: ${error.message}`);
     if (verbose) console.error(error.stack);
+    log.error({ action: 'session_crash', error: error.message, stack: error.stack?.substring(0, 500) });
+    await analyzeSession({ status: 'error', likesOk: likesCount, likesFail: target - likesCount, feedEmpty: true, chromeRam: getChromeMemoryMB(), errors: [error.message] }).catch(() => {});
   } finally {
     const endRAM = getChromeMemoryMB();
     const duration = ((Date.now() - startTime) / 60000).toFixed(1);
@@ -627,6 +641,11 @@ async function runSession() {
     // Write result for test scripts
     const result = { success: likesCount >= target, likes: likesCount, target, likedPosts, duration: parseFloat(duration), ram: { start: startRAM, end: endRAM } };
     try { fs.writeFileSync('/tmp/session-result.json', JSON.stringify(result, null, 2)); } catch {}
+
+    // Log session end + health monitor
+    log.session({ action: 'end', status: likesCount >= target ? 'ok' : 'partial', likesOk: likesCount, likesFail: target - likesCount, duration_min: parseFloat(duration), ram_end: endRAM });
+    log.chrome({ action: 'session_end', ram_start: startRAM, ram_end: endRAM });
+    await analyzeSession({ status: likesCount >= target ? 'ok' : 'partial', likesOk: likesCount, likesFail: target - likesCount, feedEmpty: false, chromeRam: endRAM }).catch(() => {});
 
     // Notif Telegram
     try {
