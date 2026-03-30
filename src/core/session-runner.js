@@ -176,8 +176,13 @@ async function extractPostsWithButtons(page) {
 
       // Extraire texte et auteur depuis le container
       const text = container?.innerText?.substring(0, 1500) || '';
-      const authorEl = container?.querySelector('[aria-label*="profil"], a[href*="/in/"]');
+      const authorEl = container?.querySelector('a[href*="/in/"]');
       const author = authorEl?.innerText?.trim() || authorEl?.getAttribute('aria-label') || '';
+      const authorUrl = authorEl?.href ? 'https://www.linkedin.com' + new URL(authorEl.href).pathname : (authorEl?.href || '');
+
+      // URL du post (lien "il y a X heures" ou lien activity)
+      const postLinkEl = container?.querySelector('a[href*="/feed/update/"], a[href*="activity"]');
+      const postUrl = postLinkEl?.href || '';
 
       // Générer un ID unique basé sur la position dans le DOM
       const btnRect = btn.getBoundingClientRect();
@@ -188,12 +193,14 @@ async function extractPostsWithButtons(page) {
         text: text.substring(0, 1500),
         textLength: text.length,
         author,
+        authorUrl,
+        postUrl,
         title: '',
         hasLikeButton: true,
         isAlreadyLiked: false,
         reactions: '0',
-        postUrn: postId, // pas de data-urn disponible, on utilise un ID positionnel
-        buttonSelector: null, // on utilisera un index-based click
+        postUrn: postId,
+        buttonSelector: null,
         buttonIndex: index,
       };
     });
@@ -603,7 +610,9 @@ async function runSession() {
         log.action({ action: 'like_ok', reason: result.reason, attempts: result.attempts, count: likesCount, target, post: result.post });
         if (sb) sb.incrementAnalytics({ likes_given: 1 }).catch(() => {});
         if (sb) sb.logAction('engagement', 'like', result.post?.author || 'unknown').catch(() => {});
-        console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}`);
+        const postLink = result.post?.postUrl ? `\n      🔗 Post: ${result.post.postUrl}` : '';
+        const profileLink = result.post?.authorUrl ? `\n      👤 Profil: ${result.post.authorUrl}` : '';
+        console.log(`   ✅ CONFIRMÉ (${result.reason}, ${result.attempts}x) — ${likesCount}/${target}${profileLink}${postLink}`);
       } else {
         log.action({ action: 'like_fail', reason: result.reason, count: likesCount, target });
         console.log(`   ❌ Échoué: ${result.reason}`);
@@ -665,7 +674,9 @@ async function runSession() {
     if (likedPosts.length > 0) {
       console.log('📋 Posts likés:');
       likedPosts.forEach((p, i) => {
-        console.log(`   ${i+1}. "${p.author}" (${p.score}/10) — "${p.text}..."`);
+        const profile = p.authorUrl ? ` — ${p.authorUrl}` : '';
+        const post = p.postUrl ? `\n      └─ Post: ${p.postUrl}` : '';
+        console.log(`   ${i+1}. "${p.author}" (score: ${p.score}/10)${profile}${post}`);
       });
       console.log('');
     }
